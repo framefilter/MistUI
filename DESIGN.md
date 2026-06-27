@@ -78,8 +78,9 @@ That is what lets one package work across every supported device.
   from a browser; real `wg-quick` config import.
 - **M2 — wizard + privacy.** First-boot flow, scheduled MAC rotation,
   kill switch.
-- **M3 — packaging + distribution.** Per-arch `.apk`/`.ipk`; publish a feed
-  so the package can be selected via the OpenWRT firmware selector / ASU.
+- **M3 — packaging + distribution.** Per-arch `.apk`/`.ipk`, plus
+  ready-to-flash images for a small, curated set of supported models
+  (see §8). Optionally publish a feed for the OpenWRT firmware selector / ASU.
 
 ## 7. Relationship to BubbleUI
 
@@ -87,3 +88,30 @@ Shared: visual language, UX patterns, the "above-UCI, vanilla-OpenWRT"
 philosophy. Not shared: the backend. MistUI re-decides every backend choice
 for the small tier (see README table). Improvements that are size-neutral
 (e.g. the minimal-WebAuthn approach) may flow back upstream.
+
+## 8. Distribution
+
+MistUI ships through two channels and — unlike BubbleUI — embraces pre-built
+images:
+
+1. **Ready-to-flash images (primary path for the audience).** For a small,
+   curated set of supported models we publish factory / sysupgrade images
+   with MistUI already baked in: flash once, no OpenWRT knowledge required.
+   This is appropriate *because* the model list is deliberately short — a
+   large per-device matrix is what turns a package into a distribution, so
+   we keep the list small on purpose.
+2. **`.apk` / `.ipk` (for existing OpenWRT users).** Install on top of a
+   stock OpenWRT the user already runs, or select it via the firmware
+   selector / ASU with a custom feed.
+
+**How the images are built — and why DSA never bites.** Images come from the
+official **OpenWRT Image Builder** for each device profile, with the MistUI
+package dropped into a local feed and pulled in via `PACKAGES="mistui"`. The
+Image Builder inherits the device's DSA / board.json / kmod set from the
+official target, so we never author switch topology — the same reason the
+live-dev loop avoids it. (BubbleUI's CI already does this for one device;
+MistUI generalizes it to a short profile matrix.)
+
+Practicalities: images track one OpenWRT release at a time; unsigned at first
+(flash via vendor recovery or `sysupgrade -n`), with signing a post-MVP item;
+artifacts are published on GitHub Releases.
