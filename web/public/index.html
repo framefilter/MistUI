@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark light" />
+  <title>MistUI</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <main id="app">
+    <header class="bar">
+      <span class="logo">≈ MistUI</span>
+      <span id="status" class="pill">checking…</span>
+    </header>
+
+    <section class="card">
+      <h2>VPN</h2>
+      <p class="dim">WireGuard tunnel control.</p>
+      <div class="row">
+        <button id="vpn-up">Connect</button>
+        <button id="vpn-down" class="ghost">Disconnect</button>
+      </div>
+      <pre id="vpn-status" class="out dim">—</pre>
+    </section>
+
+    <section class="card">
+      <h2>Privacy</h2>
+      <p class="dim">Randomize the Wi-Fi MAC address.</p>
+      <div class="row">
+        <button id="roll-mac" class="ghost">Roll MAC now</button>
+      </div>
+      <pre id="mac-out" class="out dim">—</pre>
+    </section>
+
+    <footer class="dim small">
+      MistUI — friendlier, more private travel routing on small hardware.
+    </footer>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
