@@ -15,6 +15,7 @@ import (
 
 const (
 	macScheduleKey = "mac_schedule"
+	macProfileKey  = "mac_profile"
 	macLastRollKey = "mac_last_roll"
 )
 
@@ -28,6 +29,15 @@ func (s *Server) macSchedule() string {
 		return string(v)
 	}
 	return "on-join"
+}
+
+// macProfile is the device-identity profile the roller mimics (MAC OUI +
+// hostname). Default generic: an honest locally-administered random MAC.
+func (s *Server) macProfile() string {
+	if v, _ := s.store.Config(macProfileKey); len(v) > 0 && netcfg.ValidProfile(string(v)) {
+		return string(v)
+	}
+	return "generic"
 }
 
 // --- Wi-Fi ---
@@ -75,18 +85,28 @@ func (s *Server) wifiJoinUplink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	roll := s.macSchedule() != "off"
+	var ident *netcfg.Identity
+	if s.macSchedule() != "off" {
+		id, err := netcfg.GenerateIdentity(s.macProfile())
+		if err != nil {
+			http.Error(w, "internal", http.StatusInternalServerError)
+			return
+		}
+		ident = &id
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
-	if err := s.wifi.JoinUplink(ctx, req.SSID, req.Key, roll); err != nil {
+	if err := s.wifi.JoinUplink(ctx, req.SSID, req.Key, ident); err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return
 	}
-	if roll {
+	resp := map[string]any{"joining": req.SSID}
+	if ident != nil {
 		_ = s.store.PutConfig(macLastRollKey, []byte(time.Now().Format(time.RFC3339)))
+		resp["identity"] = ident
 	}
 	// Association + DHCP are asynchronous; the UI polls wifi/status.
-	writeJSON(w, http.StatusOK, map[string]any{"joining": req.SSID, "macRolled": roll})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- connectivity / portal ---
@@ -147,16 +167,42 @@ func (s *Server) macScheduleSet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"mode": req.Mode})
 }
 
+func (s *Server) macProfileGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"current":  s.macProfile(),
+		"profiles": netcfg.Profiles(),
+	})
+}
+
+func (s *Server) macProfileSet(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Profile string `json:"profile"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !netcfg.ValidProfile(req.Profile) {
+		http.Error(w, "unknown identity profile", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.PutConfig(macProfileKey, []byte(req.Profile)); err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"profile": req.Profile})
+}
+
 func (s *Server) rollMAC(w http.ResponseWriter, r *http.Request) {
+	ident, err := netcfg.GenerateIdentity(s.macProfile())
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	mac, err := s.wifi.RollSTAMAC(ctx)
-	if err != nil {
+	if err := s.wifi.ApplySTAIdentity(ctx, ident); err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return
 	}
 	_ = s.store.PutConfig(macLastRollKey, []byte(time.Now().Format(time.RFC3339)))
-	writeJSON(w, http.StatusOK, map[string]any{"mac": mac})
+	writeJSON(w, http.StatusOK, map[string]any{"identity": ident})
 }
 
 // RunMACSchedule is the daemon's daily-rotation loop: hourly wakeups, roll
@@ -180,14 +226,18 @@ func (s *Server) RunMACSchedule(ctx context.Context) {
 				continue
 			}
 		}
+		ident, err := netcfg.GenerateIdentity(s.macProfile())
+		if err != nil {
+			continue
+		}
 		cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		mac, err := s.wifi.RollSTAMAC(cctx)
+		err = s.wifi.ApplySTAIdentity(cctx, ident)
 		cancel()
 		if err != nil {
 			slog.Debug("scheduled mac roll skipped", "err", err)
 			continue
 		}
 		_ = s.store.PutConfig(macLastRollKey, []byte(time.Now().Format(time.RFC3339)))
-		slog.Info("scheduled mac roll", "mac", mac)
+		slog.Info("scheduled mac roll", "mac", ident.MAC, "hostname", ident.Hostname)
 	}
 }

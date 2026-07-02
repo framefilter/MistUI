@@ -66,6 +66,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/net/portal", s.requireSession(s.netPortal))
 	m.HandleFunc("GET /api/privacy/mac-schedule", s.requireSession(s.macScheduleGet))
 	m.HandleFunc("POST /api/privacy/mac-schedule", s.requireSession(s.macScheduleSet))
+	m.HandleFunc("GET /api/privacy/mac-profile", s.requireSession(s.macProfileGet))
+	m.HandleFunc("POST /api/privacy/mac-profile", s.requireSession(s.macProfileSet))
 	m.HandleFunc("POST /api/privacy/roll-mac", s.requireSession(s.rollMAC))
 	s.api = m
 }

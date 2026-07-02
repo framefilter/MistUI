@@ -165,15 +165,26 @@
 
       <section class="card">
         <h2>Privacy</h2>
-        <p class="dim">The MAC address is the identity hotel networks see.
-        Rolling it drops the current connection (and any portal sign-in).</p>
-        <div class="row">
+        <p class="dim">The MAC address and hostname are the identity hotel
+        networks see. Rolling drops the current connection (and any portal
+        sign-in), so it happens before joining a network.</p>
+        <label class="field">
+          <span class="dim small">Appear as</span>
+          <select id="mac-profile"></select>
+        </label>
+        <p class="dim small">A device profile pairs a matching hardware
+        vendor and hostname, so you blend in as that kind of phone rather
+        than as an obviously-randomized address.</p>
+        <label class="field">
+          <span class="dim small">Change identity</span>
           <select id="mac-mode">
-            <option value="on-join">New MAC for every network (recommended)</option>
-            <option value="daily">New MAC daily</option>
-            <option value="off">Keep device MAC</option>
+            <option value="on-join">For every network (recommended)</option>
+            <option value="daily">Once a day</option>
+            <option value="off">Never (keep device identity)</option>
           </select>
-          <button id="roll-mac" class="ghost">Roll now</button>
+        </label>
+        <div class="row">
+          <button id="roll-mac" class="ghost">Roll identity now</button>
         </div>
         <pre id="mac-out" class="out dim">—</pre>
       </section>

@@ -151,6 +151,9 @@ select {
 .toggle { align-items: center; font-size: 13px; color: var(--fg-dim); }
 .toggle input { flex: 0 0 auto; accent-color: var(--accent-ok); }
 
+.field { display: flex; flex-direction: column; gap: 4px; margin-top: var(--space); }
+.field select { flex: 1; }
+
 .warn-text { color: var(--accent-warn); font-size: 13px; }
 
 .net-item {

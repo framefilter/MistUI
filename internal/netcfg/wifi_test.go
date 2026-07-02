@@ -59,7 +59,8 @@ func TestSetAP(t *testing.T) {
 func TestJoinUplink(t *testing.T) {
 	rec := &scriptedRunner{}
 	w := NewWiFiWithRunner(rec)
-	if err := w.JoinUplink(context.Background(), "HotelGuest", "", true); err != nil {
+	ident := &Identity{MAC: "3c:15:c2:aa:bb:cc", Hostname: "iPhone", Profile: "apple"}
+	if err := w.JoinUplink(context.Background(), "HotelGuest", "", ident); err != nil {
 		t.Fatal(err)
 	}
 	all := rec.all()
@@ -68,7 +69,8 @@ func TestJoinUplink(t *testing.T) {
 		"wireless.mistui_sta.network=wwan",
 		"wireless.mistui_sta.ssid=HotelGuest",
 		"wireless.mistui_sta.encryption=none",
-		"wireless.mistui_sta.macaddr=", // rolled before association
+		"wireless.mistui_sta.macaddr=3c:15:c2:aa:bb:cc", // set before association
+		"network.wwan.hostname=iPhone",                  // matching DHCP hostname
 		"network.wwan.proto=dhcp",
 		"uci add_list firewall.$zone.network=wwan",
 		"/etc/init.d/network reload",
@@ -82,17 +84,19 @@ func TestJoinUplink(t *testing.T) {
 		t.Error("open network must not set a key")
 	}
 
-	// Secured join carries psk2 + key, no MAC roll when disabled.
+	// Secured join, no identity: psk2 + key, and MAC/hostname overrides cleared.
 	rec2 := &scriptedRunner{}
-	w2 := NewWiFiWithRunner(rec2)
-	if err := w2.JoinUplink(context.Background(), "CaféWLAN", "espresso99", false); err != nil {
+	if err := NewWiFiWithRunner(rec2).JoinUplink(context.Background(), "CaféWLAN", "espresso99", nil); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(rec2.all(), "encryption=psk2") || !strings.Contains(rec2.all(), "key=espresso99") {
 		t.Error("secured join missing psk2/key")
 	}
-	if strings.Contains(rec2.all(), "macaddr=") {
-		t.Error("MAC rolled despite rollMAC=false")
+	if !strings.Contains(rec2.all(), "delete wireless.mistui_sta.macaddr") {
+		t.Error("nil identity should clear the MAC override")
+	}
+	if !strings.Contains(rec2.all(), "delete network.wwan.hostname") {
+		t.Error("nil identity should clear the hostname override")
 	}
 }
 
@@ -130,20 +134,29 @@ func TestScanRequiresUpRadio(t *testing.T) {
 	}
 }
 
-func TestRollSTAMAC(t *testing.T) {
+func TestApplySTAIdentity(t *testing.T) {
 	rec := &scriptedRunner{}
-	mac, err := NewWiFiWithRunner(rec).RollSTAMAC(context.Background())
-	if err != nil {
+	ident := Identity{MAC: "5c:0a:5b:11:22:33", Hostname: "Galaxy-S23", Profile: "samsung"}
+	if err := NewWiFiWithRunner(rec).ApplySTAIdentity(context.Background(), ident); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rec.all(), "wireless.mistui_sta.macaddr="+mac) {
-		t.Error("rolled MAC not written to UCI")
+	for _, want := range []string{
+		"wireless.mistui_sta.macaddr=5c:0a:5b:11:22:33",
+		"network.wwan.hostname=Galaxy-S23",
+		"wifi reload",
+	} {
+		if !strings.Contains(rec.all(), want) {
+			t.Errorf("missing %q", want)
+		}
 	}
-	if !strings.Contains(rec.all(), "wifi reload") {
-		t.Error("missing wifi reload")
+
+	// Generic identity (no hostname) clears the hostname override.
+	rec2 := &scriptedRunner{}
+	gen := Identity{MAC: "02:aa:bb:cc:dd:ee", Profile: "generic"}
+	if err := NewWiFiWithRunner(rec2).ApplySTAIdentity(context.Background(), gen); err != nil {
+		t.Fatal(err)
 	}
-	// Locally-administered unicast: second hex digit is 2, 6, a, or e.
-	if !strings.ContainsAny(mac[1:2], "26ae") {
-		t.Errorf("MAC %s not locally administered", mac)
+	if !strings.Contains(rec2.all(), "delete network.wwan.hostname") {
+		t.Error("generic identity should clear the hostname override")
 	}
 }

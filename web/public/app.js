@@ -133,11 +133,12 @@ async function refresh() {
 }
 
 async function refreshDash(wifiData) {
-  const [v, c, ks, mm] = await Promise.all([
+  const [v, c, ks, mm, mp] = await Promise.all([
     api('GET', '/api/vpn/status'),
     api('GET', '/api/vpn/config'),
     api('GET', '/api/vpn/killswitch'),
     api('GET', '/api/privacy/mac-schedule'),
+    api('GET', '/api/privacy/mac-profile'),
   ]);
   $('vpn-status').textContent = v.ok
     ? (v.data.up ? (v.data.detail || 'connected') : 'disconnected')
@@ -155,6 +156,16 @@ async function refreshDash(wifiData) {
   }
   if (ks.ok) $('killswitch').checked = !!ks.data.enabled;
   if (mm.ok) $('mac-mode').value = mm.data.mode;
+  if (mp.ok) {
+    const sel = $('mac-profile');
+    sel.replaceChildren(...(mp.data.profiles || []).map((p) => {
+      const o = document.createElement('option');
+      o.value = p.key;
+      o.textContent = p.label;
+      return o;
+    }));
+    sel.value = mp.data.current;
+  }
 
   const w = wifiData.apEnabled !== undefined
     ? { ok: true, data: wifiData }
@@ -278,7 +289,12 @@ $('killswitch').addEventListener('change', async (e) => {
 
 $('mac-mode').addEventListener('change', async (e) => {
   const r = await api('POST', '/api/privacy/mac-schedule', { mode: e.target.value });
-  if (!r.ok) alert('could not save MAC schedule');
+  if (!r.ok) alert('could not save identity schedule');
+});
+
+$('mac-profile').addEventListener('change', async (e) => {
+  const r = await api('POST', '/api/privacy/mac-profile', { profile: e.target.value });
+  if (!r.ok) alert('could not save identity profile');
 });
 
 $('setup-create').addEventListener('click', async () => {
@@ -366,7 +382,11 @@ $('vpn-import').addEventListener('click', async () => {
 
 $('roll-mac').addEventListener('click', async () => {
   const r = await api('POST', '/api/privacy/roll-mac');
-  $('mac-out').textContent = r.ok ? `uplink MAC → ${r.data.mac}` : (r.data.error || `error ${r.status}`);
+  if (!r.ok) { $('mac-out').textContent = r.data.error || `error ${r.status}`; return; }
+  const id = r.data.identity || {};
+  $('mac-out').textContent = id.hostname
+    ? `now appearing as “${id.hostname}” · ${id.mac}`
+    : `uplink MAC → ${id.mac}`;
 });
 
 refresh();

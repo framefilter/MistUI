@@ -112,5 +112,21 @@ func TestLiveM2Network(t *testing.T) {
 	if code, _ := post(t, c, base+"/api/privacy/roll-mac", nil); code != http.StatusUnprocessableEntity {
 		t.Fatalf("roll-mac without uplink: want 422")
 	}
+
+	// Identity profile: default generic, selectable, validated.
+	res, _ = c.Get(base + "/api/privacy/mac-profile")
+	var prof struct {
+		Current  string `json:"current"`
+		Profiles []struct{ Key, Label string }
+	}
+	if err := jsonDecode(res, &prof); err != nil || prof.Current != "generic" || len(prof.Profiles) != 4 {
+		t.Fatalf("mac-profile: %v %+v", err, prof)
+	}
+	if code, _ := post(t, c, base+"/api/privacy/mac-profile", map[string]string{"profile": "apple"}); code != http.StatusOK {
+		t.Fatal("set apple profile failed")
+	}
+	if code, _ := post(t, c, base+"/api/privacy/mac-profile", map[string]string{"profile": "nope"}); code != http.StatusBadRequest {
+		t.Fatal("bogus profile accepted")
+	}
 	t.Logf("live M2 OK against %s", base)
 }

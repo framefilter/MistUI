@@ -120,7 +120,14 @@ missing is something the user simply *cannot* configure (no LuCI fallback).
    hotel networks are the primary use case, and most of them gate access.
 4. **WireGuard** — import a config, connect/disconnect, kill switch.
 5. **DNS** — encrypted DNS (DoH/DoT) default.
-6. **MAC privacy** — randomize the Wi-Fi MAC; on-demand now, scheduled next.
+6. **MAC privacy** — roll the uplink identity the hotel network sees. Not
+   just the MAC: a bare locally-administered random MAC advertises itself
+   as spoofed (the LA bit) and pairs oddly with the router's hostname. So
+   the roll is an *identity profile* — a real vendor OUI plus a matching
+   DHCP hostname, applied together to the STA before association. Profiles:
+   Generic (honest LA-random, no hostname) / Apple iPhone / Samsung Galaxy
+   / Google Pixel, user-selectable. Schedule: on-join (default) / daily /
+   off. Ported from BubbleUI.
 7. **Maintenance** — factory reset, firmware update.
 
 Interface names (radio/AP/`lan`/`wan`) are read from `board.json`/UCI, never

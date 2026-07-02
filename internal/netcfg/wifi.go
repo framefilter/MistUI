@@ -87,9 +87,10 @@ func (w WiFi) SetAP(ctx context.Context, ssid, key string) error {
 }
 
 // JoinUplink points the STA at an upstream network (empty key = open, the
-// typical captive-portal hotel case). rollMAC applies a fresh random MAC
-// *before* association — §5.1: never roll while a portal grant is live.
-func (w WiFi) JoinUplink(ctx context.Context, ssid, key string, rollMAC bool) error {
+// typical captive-portal hotel case). A non-nil ident applies its spoofed
+// MAC + DHCP hostname *before* association — §5.1: the identity the hotel
+// sees is set once, up front, never rolled while a portal grant is live.
+func (w WiFi) JoinUplink(ctx context.Context, ssid, key string, ident *Identity) error {
 	if err := validSSID(ssid); err != nil {
 		return err
 	}
@@ -113,16 +114,13 @@ func (w WiFi) JoinUplink(ctx context.Context, ssid, key string, rollMAC bool) er
 	} else {
 		cmds = append(cmds, []string{"sh", "-c", "uci -q delete wireless." + staSection + ".key || true"})
 	}
-	if rollMAC {
-		mac, err := RandomMAC()
-		if err != nil {
-			return err
-		}
-		cmds = append(cmds, []string{"uci", "set", "wireless." + staSection + ".macaddr=" + mac})
-	}
+	cmds = append(cmds, macCmds(ident)...)
 	cmds = append(cmds,
 		[]string{"uci", "set", "network." + uplinkNet + "=interface"},
 		[]string{"uci", "set", "network." + uplinkNet + ".proto=dhcp"},
+	)
+	cmds = append(cmds, hostnameCmds(ident)...)
+	cmds = append(cmds,
 		[]string{"uci", "commit", "wireless"},
 		[]string{"uci", "commit", "network"},
 		// The uplink lives in the wan zone (masquerade, input reject).
@@ -214,27 +212,41 @@ func (w WiFi) Status(ctx context.Context) (Status, error) {
 	return st, nil
 }
 
-// RollSTAMAC gives the uplink STA a fresh random MAC via UCI and reloads
-// wifi. This is the identity the hotel network sees. Reloading drops any
-// live association — callers gate this on schedule/user intent (§5.1: a
+// macCmds sets (or clears) the STA MAC for ident. A nil ident or empty MAC
+// clears the override, restoring the hardware address.
+func macCmds(ident *Identity) [][]string {
+	if ident == nil || ident.MAC == "" {
+		return [][]string{{"sh", "-c", "uci -q delete wireless." + staSection + ".macaddr || true"}}
+	}
+	return [][]string{{"uci", "set", "wireless." + staSection + ".macaddr=" + ident.MAC}}
+}
+
+// hostnameCmds sets (or clears) the uplink DHCP hostname for ident.
+func hostnameCmds(ident *Identity) [][]string {
+	if ident == nil || ident.Hostname == "" {
+		return [][]string{{"sh", "-c", "uci -q delete network." + uplinkNet + ".hostname || true"}}
+	}
+	return [][]string{{"uci", "set", "network." + uplinkNet + ".hostname=" + ident.Hostname}}
+}
+
+// ApplySTAIdentity rewrites the uplink's spoofed MAC + DHCP hostname on an
+// already-configured uplink and reloads wifi. The reload drops any live
+// association — callers gate this on schedule/user intent (§5.1: a
 // captive-portal grant is bound to the MAC and dies with it).
-func (w WiFi) RollSTAMAC(ctx context.Context) (string, error) {
+func (w WiFi) ApplySTAIdentity(ctx context.Context, ident Identity) error {
 	if _, err := w.run.Run(ctx, "uci", "-q", "get", "wireless."+staSection); err != nil {
-		return "", fmt.Errorf("no uplink configured yet")
+		return fmt.Errorf("no uplink configured yet")
 	}
-	mac, err := RandomMAC()
-	if err != nil {
-		return "", err
-	}
-	cmds := [][]string{
-		{"uci", "set", "wireless." + staSection + ".macaddr=" + mac},
-		{"uci", "commit", "wireless"},
-		{"wifi", "reload"},
-	}
-	if err := w.runAll(ctx, cmds); err != nil {
-		return "", err
-	}
-	return mac, nil
+	cmds := append(macCmds(&ident), hostnameCmds(&ident)...)
+	cmds = append(cmds,
+		[]string{"uci", "commit", "wireless"},
+		[]string{"uci", "commit", "network"},
+		// Re-DHCP so the new hostname is sent, and re-associate so the new
+		// MAC takes effect.
+		[]string{"/etc/init.d/network", "reload"},
+		[]string{"wifi", "reload"},
+	)
+	return w.runAll(ctx, cmds)
 }
 
 // upDevice returns the OS name of an up wireless interface (per netifd).
