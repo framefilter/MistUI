@@ -41,6 +41,7 @@ func TestLiveM2Network(t *testing.T) {
 	f := newFakeAuthenticator(t)
 	f.origin = origin
 	register(t, c, base, f)
+	leaveSafe(t, c, base)
 
 	// Travel AP — enables the radio, prerequisite for scanning.
 	code, body := post(t, c, base+"/api/wifi/ap", map[string]string{

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/framefilter/mistui/internal/dns"
@@ -32,7 +33,14 @@ type Server struct {
 	origins []string
 	chals   *ttlSet // outstanding ceremony challenges
 	stepUps *ttlSet // one-shot step-up credits, keyed by session token
-	api     *http.ServeMux
+
+	// Portal-mode machinery (§5.1): the watch goroutine, its wake-up
+	// channel, an injectable prober, and the last human-readable outcome.
+	portalKick chan struct{}
+	probe      func(context.Context) netcfg.PortalStatus
+	portalNote atomic.Pointer[string]
+
+	api *http.ServeMux
 }
 
 // New builds a Server with sane defaults for the reference hardware. rpID
@@ -42,8 +50,10 @@ func New(st *store.Store, conn vpn.Connector, wifi netcfg.WiFi, dnsSvc *dns.Serv
 	s := &Server{
 		store: st, vpn: conn, wifi: wifi, dns: dnsSvc, maint: maintSvc, wgIface: vpn.Iface,
 		rpID: rpID, origins: origins,
-		chals:   newTTLSet(challengeTTL),
-		stepUps: newTTLSet(stepUpTTL),
+		chals:      newTTLSet(challengeTTL),
+		stepUps:    newTTLSet(stepUpTTL),
+		portalKick: make(chan struct{}, 1),
+		probe:      defaultProbe,
 	}
 	// The forwarder starts on the built-in default; restore the user's pick.
 	if v, _ := st.Config(dnsProviderKey); len(v) > 0 {
@@ -78,6 +88,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/wifi/ap", s.requireSession(s.wifiSetAP))
 	m.HandleFunc("POST /api/wifi/uplink", s.requireSession(s.wifiJoinUplink))
 	m.HandleFunc("GET /api/net/portal", s.requireSession(s.netPortal))
+	m.HandleFunc("POST /api/net/portal-mode", s.requireSession(s.netPortalMode))
 	m.HandleFunc("GET /api/dns", s.requireSession(s.dnsGet))
 	m.HandleFunc("POST /api/dns", s.requireSession(s.dnsSet))
 	m.HandleFunc("POST /api/dns/provider", s.requireSession(s.dnsProviderSet))

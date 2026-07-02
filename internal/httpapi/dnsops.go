@@ -73,6 +73,8 @@ func (s *Server) dnsSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_ = s.store.PutConfig(dnsDefaultedKey, []byte("user"))
+	// An explicit toggle during a portal pause outranks the saved posture.
+	s.cancelPortalMode("you changed encrypted DNS manually")
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": req.Enabled})
 }
 

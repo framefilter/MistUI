@@ -204,8 +204,9 @@ while one is authorized.
   engage, because fw4 accepts established flows before zone rules run and
   a rule change alone would let live connections keep leaking). Portal handling ships the detection +
   guided-sign-in half of §5.1; automatic kill-switch relaxing during
-  portal mode is deferred — the UI instead tells the user to toggle it,
-  which is honest and one line. Live-verified via TestLiveM2Network.
+  portal mode is deferred (landed in M2.7) — the UI instead tells the
+  user to toggle it, which is honest and one line. Live-verified via
+  TestLiveM2Network.
 - **M2.5 — encrypted DNS. ✅** The §5-item-5 stack, with no new packages:
   a DoH forwarder inside `mistd` (127.0.0.1#5335), dnsmasq `noresolv` +
   forward, and port-53 REJECTs on the wan zone — closing the kill switch's
@@ -227,6 +228,19 @@ while one is authorized.
   `/etc/mistui` keep.d marker survived; apk-installed packages did not —
   §8's the-image-is-the-product point, demonstrated) and a real factory
   reset (overlay verifiably wiped: config, credentials, CA, keys all gone).
+- **M2.7 — portal-mode automation. ✅** The deferred half of §5.1: mistd
+  itself scouts every uplink join, pauses exactly the protections that
+  are on (tunnel held down, kill switch, encrypted DNS — the posture is
+  recorded in bbolt *first*, so a daemon restart mid-pause resumes the
+  machine rather than stranding the router unprotected), and restores
+  them — plus the VPN, when one is configured — the moment the probe sees
+  real connectivity. The window is hard-bounded (10 min, then forced
+  restore); a manual pause/restore endpoint covers mid-stay
+  re-captivation (hotel daily re-auth); and a manual kill-switch or DNS
+  toggle during a pause cancels the machine — an explicit user action
+  outranks a saved posture. Live-verified on the Mango by blinding the
+  probe with a temporary egress rule, observing the paused posture, then
+  unblinding and watching the automatic restore.
 - **M3 — images.** Ready-to-flash factory/sysupgrade images for a small,
   curated set of supported models, composed via the Image Builder with
   LuCI/uhttpd left out (see §8); the per-arch `.apk`/`.ipk` is the build

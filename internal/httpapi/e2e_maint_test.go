@@ -45,6 +45,7 @@ func TestLiveMaintenance(t *testing.T) {
 	f := newFakeAuthenticator(t)
 	f.origin = origin
 	register(t, c, base, f)
+	leaveSafe(t, c, base)
 
 	// Board info comes from the platform, never hardcoded.
 	res, err = c.Get(base + "/api/maintenance/board")

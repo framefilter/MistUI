@@ -108,16 +108,10 @@ func (s *Server) wifiJoinUplink(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.PutConfig(macLastRollKey, []byte(time.Now().Format(time.RFC3339)))
 		resp["identity"] = ident
 	}
-	// Association + DHCP are asynchronous; the UI polls wifi/status.
+	// Association + DHCP are asynchronous; the UI polls wifi/status, and
+	// the portal scout (§5.1) probes the new uplink in the background.
+	s.kickPortalWatch()
 	writeJSON(w, http.StatusOK, resp)
-}
-
-// --- connectivity / portal ---
-
-func (s *Server) netPortal(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	writeJSON(w, http.StatusOK, netcfg.ProbePortal(ctx))
 }
 
 // --- kill switch ---
@@ -155,6 +149,8 @@ func (s *Server) killSwitchSet(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// An explicit toggle during a portal pause outranks the saved posture.
+	s.cancelPortalMode("you changed the kill switch manually")
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": req.Enabled})
 }
 

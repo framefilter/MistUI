@@ -140,6 +140,31 @@ func jsonDecode(res *http.Response, v any) error {
 	return json.NewDecoder(res.Body).Decode(v)
 }
 
+// leaveSafe registers a cleanup that puts the target router into a posture
+// that cannot strand anything sitting behind it: portal pause ended, kill
+// switch off, encrypted DNS off. Live tests toggle exactly these — and the
+// dev machine driving the test typically sits BEHIND the dev router, so a
+// test that dies with the kill switch on cuts its own (and the user's)
+// internet, persistently: that state survives reboots by construction.
+// Best-effort on purpose; it must never mask the real test failure.
+func leaveSafe(t *testing.T, c *http.Client, base string) {
+	t.Helper()
+	t.Cleanup(func() {
+		for _, req := range []struct{ path, body string }{
+			{"/api/net/portal-mode", `{"active":false}`},
+			{"/api/vpn/killswitch", `{"enabled":false}`},
+			{"/api/dns", `{"enabled":false}`},
+		} {
+			res, err := c.Post(base+req.path, "application/json", strings.NewReader(req.body))
+			if err != nil {
+				t.Logf("leaveSafe %s: %v (restore the router by hand!)", req.path, err)
+				continue
+			}
+			res.Body.Close()
+		}
+	})
+}
+
 // e2eTransport bootstraps trust from the device's own CA, like a
 // first-boot user installing /ca.pem.
 func e2eTransport(t *testing.T, base string) http.RoundTripper {

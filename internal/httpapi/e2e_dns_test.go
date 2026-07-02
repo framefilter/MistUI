@@ -122,6 +122,7 @@ func TestLiveDNS(t *testing.T) {
 	f := newFakeAuthenticator(t)
 	f.origin = origin
 	register(t, c, base, f)
+	leaveSafe(t, c, base)
 
 	type dnsView struct {
 		Enabled   bool   `json:"enabled"`

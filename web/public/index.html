@@ -102,13 +102,15 @@
           </div>
           <pre id="wiz-uplink-out" class="out dim hidden"></pre>
           <div id="wiz-portal" class="hidden">
-            <p class="warn-text">This network requires a sign-in. Your
-            traffic is unprotected until it's done.</p>
+            <p class="warn-text">This network requires a sign-in.</p>
             <div class="row">
               <a id="wiz-portal-link" href="#" target="_blank" rel="noopener"><button>Open sign-in page</button></a>
+              <button id="wiz-portal-pause" class="ghost hidden">Pause protections &amp; sign in</button>
+              <button id="wiz-portal-restore" class="ghost hidden">Restore protections now</button>
               <button id="wiz-portal-recheck" class="ghost">I signed in — re-check</button>
             </div>
           </div>
+          <p id="wiz-portal-note" class="dim small"></p>
         </div>
 
         <div id="wiz-3" class="hidden">
@@ -131,13 +133,15 @@
         <h2>Network</h2>
         <p id="net-summary" class="dim small">—</p>
         <div id="dash-portal" class="hidden">
-          <p class="warn-text">Sign-in required on the current network —
-          traffic is unprotected until it's done.</p>
+          <p class="warn-text">Sign-in required on the current network.</p>
           <div class="row">
             <a id="dash-portal-link" href="#" target="_blank" rel="noopener"><button>Open sign-in page</button></a>
+            <button id="dash-portal-pause" class="ghost hidden">Pause protections &amp; sign in</button>
+            <button id="dash-portal-restore" class="ghost hidden">Restore protections now</button>
             <button id="dash-portal-recheck" class="ghost">Re-check</button>
           </div>
         </div>
+        <p id="dash-portal-note" class="dim small"></p>
       </section>
       <section class="card">
         <h2>VPN</h2>

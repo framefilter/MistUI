@@ -32,13 +32,14 @@ The Svelte design language and UX ideas are shared; the backend is not.
 
 ## Status
 
-**M2.6** — running on hardware. On a stock-OpenWRT Mango: WebAuthn login,
-WireGuard with kill switch, the first-boot wizard, captive-portal
-detection, MAC identity profiles, encrypted DNS (DoH) on by default —
-including the firewall work that stops plaintext DNS from ever leaving the
-WAN — and maintenance (factory reset, verified firmware update) behind
-step-up re-auth: destructive actions take a fresh passkey touch, not just
-a live session. Next: ready-to-flash images (M3).
+**M2.7** — running on hardware. On a stock-OpenWRT Mango: WebAuthn login,
+WireGuard with kill switch, the first-boot wizard, MAC identity profiles,
+encrypted DNS (DoH) on by default — including the firewall work that stops
+plaintext DNS from ever leaving the WAN — maintenance (factory reset,
+verified firmware update) behind step-up re-auth, and automated
+captive-portal handling: the router pauses its own protections for the
+sign-in and restores them (VPN included) the moment you're online. Next:
+ready-to-flash images (M3).
 
 ## Layout
 

@@ -69,6 +69,9 @@ func main() {
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()
 	go srv.RunMACSchedule(schedCtx)
+	// The §5.1 portal state machine: scouts new uplinks, pauses and
+	// restores protections around captive-portal sign-ins.
+	go srv.RunPortalWatch(schedCtx)
 
 	if err := fwd.Listen(); err != nil {
 		slog.Error("doh forwarder bind failed — encrypted DNS will not resolve", "addr", *dnsListen, "err", err)

@@ -286,42 +286,75 @@ $('dns-provider').addEventListener('change', async (e) => {
 });
 
 // --- captive portal (§5.1) ---
+//
+// mistd runs the portal state machine itself: it scouts new uplinks,
+// pauses the protections a sign-in needs punched through, and restores
+// them (plus the VPN) once real connectivity appears. The UI's job is to
+// show that state honestly and offer the manual pause/restore levers.
+
+let portalTimer = null;
 
 async function checkPortal(prefix) {
   const p = await api('GET', '/api/net/portal');
   const box = $(prefix + '-portal');
   if (!p.ok || !box) return p;
-  if (p.data.captive) {
+  const d = p.data;
+  $(prefix + '-portal-note').textContent = d.note || '';
+  const paused = d.pause && d.pause.active;
+  if (d.captive || paused) {
     box.classList.remove('hidden');
-    const link = $(prefix + '-portal-link');
     // A hijack portal with no redirect URL still triggers on any http page.
-    link.href = p.data.portalUrl || 'http://neverssl.com';
-    // The kill switch blocks exactly the direct traffic a sign-in needs,
-    // and portals announce themselves by hijacking plaintext DNS — §5.1
-    // portal mode. Tell the user instead of failing mysteriously.
-    const [ks, dn] = await Promise.all([
-      api('GET', '/api/vpn/killswitch'),
-      api('GET', '/api/dns'),
-    ]);
-    if (ks.ok && ks.data.enabled) {
-      box.querySelector('.warn-text').textContent =
-        'Sign-in required — but the kill switch is blocking it. ' +
-        'Turn the kill switch off' +
-        (dn.ok && dn.data.enabled ? ' (and encrypted DNS, if the sign-in page won’t load)' : '') +
-        ', sign in, then turn it back on.';
-    } else if (dn.ok && dn.data.enabled) {
-      box.querySelector('.warn-text').textContent =
-        'Sign-in required. If the sign-in page won’t load, temporarily ' +
-        'turn off encrypted DNS, sign in, then turn it back on.';
+    $(prefix + '-portal-link').href = d.portalUrl || 'http://neverssl.com';
+    const txt = box.querySelector('.warn-text');
+    if (paused) {
+      const mins = Math.max(1, Math.round((d.pause.secondsLeft || 0) / 60));
+      txt.textContent =
+        'Sign-in required. Protections are paused so the sign-in can go ' +
+        `through — everything restores automatically once you're online ` +
+        `(or in ~${mins} min).`;
+      $(prefix + '-portal-pause').classList.add('hidden');
+      $(prefix + '-portal-restore').classList.remove('hidden');
+      watchPortalPause(prefix);
     } else {
-      box.querySelector('.warn-text').textContent =
-        'This network requires a sign-in. Your traffic is unprotected ' +
-        'until it’s done.';
+      txt.textContent =
+        'Sign-in required. If the sign-in page won’t load, pause ' +
+        'protections first — they restore themselves after.';
+      $(prefix + '-portal-pause').classList.remove('hidden');
+      $(prefix + '-portal-restore').classList.add('hidden');
     }
   } else {
     box.classList.add('hidden');
   }
   return p;
+}
+
+// While a pause is active, poll so the countdown stays honest and the UI
+// snaps back the moment the machine restores protections.
+function watchPortalPause(prefix) {
+  if (portalTimer) return;
+  portalTimer = setInterval(async () => {
+    const p = await checkPortal(prefix);
+    const still = p.ok && p.data.pause && p.data.pause.active;
+    if (!still) {
+      clearInterval(portalTimer);
+      portalTimer = null;
+      if (p.ok && p.data.online && prefix === 'wiz') wizardStep(3);
+      if (prefix === 'dash') refresh(); // toggles changed under us
+    }
+  }, 5000);
+}
+
+for (const prefix of ['wiz', 'dash']) {
+  $(prefix + '-portal-pause').addEventListener('click', async () => {
+    const r = await api('POST', '/api/net/portal-mode', { active: true });
+    if (!r.ok) alert('could not pause protections');
+    await checkPortal(prefix);
+  });
+  $(prefix + '-portal-restore').addEventListener('click', async () => {
+    const r = await api('POST', '/api/net/portal-mode', { active: false });
+    if (!r.ok) alert('could not restore protections');
+    if (prefix === 'dash') { await refresh(); } else { await checkPortal(prefix); }
+  });
 }
 
 // --- first-boot wizard ---
