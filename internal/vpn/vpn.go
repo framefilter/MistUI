@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/run"
 )
 
@@ -27,10 +28,17 @@ type Connector interface {
 }
 
 // UCIConnector is the router implementation.
-type UCIConnector struct{ run run.Runner }
+type UCIConnector struct {
+	run run.Runner
+	// flushCT empties the conntrack table after the kill switch engages
+	// (see SetKillSwitch). Nil in tests injected via WithRunner.
+	flushCT func() error
+}
 
 // NewUCIConnector returns the production connector.
-func NewUCIConnector() UCIConnector { return UCIConnector{run: run.Exec{}} }
+func NewUCIConnector() UCIConnector {
+	return UCIConnector{run: run.Exec{}, flushCT: netcfg.FlushConntrack}
+}
 
 // NewUCIConnectorWithRunner is the test seam.
 func NewUCIConnectorWithRunner(r run.Runner) UCIConnector { return UCIConnector{run: r} }

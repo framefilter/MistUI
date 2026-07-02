@@ -21,7 +21,7 @@ define Package/mistui
   CATEGORY:=Network
   TITLE:=MistUI — lightweight, private travel-router UI
   URL:=https://github.com/framefilter/mistui
-  DEPENDS:=+wireguard-tools +nftables +ca-bundle
+  DEPENDS:=+wireguard-tools +nftables +ca-bundle +kmod-nf-conntrack-netlink
 endef
 
 define Package/mistui/description

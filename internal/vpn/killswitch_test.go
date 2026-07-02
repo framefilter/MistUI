@@ -37,6 +37,23 @@ func TestKillSwitchCommands(t *testing.T) {
 	}
 }
 
+func TestKillSwitchFlushesConntrack(t *testing.T) {
+	flushes := 0
+	c := UCIConnector{run: &cannedRunner{}, flushCT: func() error { flushes++; return nil }}
+	if err := c.SetKillSwitch(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if flushes != 1 {
+		t.Errorf("enable: %d conntrack flushes, want 1 (established flows bypass fw4 rules)", flushes)
+	}
+	if err := c.SetKillSwitch(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if flushes != 1 {
+		t.Errorf("disable must not flush (nothing newly blocked); got %d total", flushes)
+	}
+}
+
 func TestKillSwitchState(t *testing.T) {
 	for reply, want := range map[string]bool{"on": true, "off": false} {
 		c := NewUCIConnectorWithRunner(&cannedRunner{reply: reply})

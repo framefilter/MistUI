@@ -9,10 +9,12 @@ package httpapi
 // restore afterwards.
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/cookiejar"
@@ -51,6 +53,48 @@ func routerResolver(t *testing.T, base string) (*net.Resolver, func() string) {
 	}
 	return r, freshName
 }
+
+// establishedFlow is a keep-alive HTTP connection through the router to a
+// stable anycast site (1.1.1.1:80), opened before the kill switch so its
+// conntrack entry predates the rule change.
+type establishedFlow struct {
+	t    *testing.T
+	conn net.Conn
+	br   *bufio.Reader
+}
+
+func newEstablishedFlow(t *testing.T) *establishedFlow {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", "1.1.1.1:80", 5*time.Second)
+	if err != nil {
+		t.Fatalf("open pre-killswitch flow: %v", err)
+	}
+	f := &establishedFlow{t: t, conn: conn, br: bufio.NewReader(conn)}
+	if !f.roundTrip(10 * time.Second) {
+		t.Fatal("pre-killswitch flow: first request failed — no route to 1.1.1.1:80?")
+	}
+	return f
+}
+
+// roundTrip sends one keep-alive HTTP request and fully drains the reply.
+func (f *establishedFlow) roundTrip(timeout time.Duration) bool {
+	f.t.Helper()
+	_ = f.conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := f.conn.Write([]byte("GET / HTTP/1.1\r\nHost: 1.1.1.1\r\n\r\n")); err != nil {
+		return false
+	}
+	res, err := http.ReadResponse(f.br, nil)
+	if err != nil {
+		return false
+	}
+	_, err = io.Copy(io.Discard, res.Body)
+	res.Body.Close()
+	return err == nil
+}
+
+func (f *establishedFlow) stillWorks() bool { return f.roundTrip(6 * time.Second) }
+
+func (f *establishedFlow) close() { f.conn.Close() }
 
 func TestLiveDNS(t *testing.T) {
 	base := os.Getenv("MISTUI_E2E_BASE")
@@ -160,6 +204,13 @@ func TestLiveDNS(t *testing.T) {
 		t.Fatal("uncached lookup failed while encrypted DNS is on and unblocked")
 	}
 
+	// Open a flow through the router *before* the kill switch, and prove
+	// the switch severs it: fw4 accepts established connections before
+	// zone rules run, so without the conntrack flush this keep-alive
+	// connection would keep working right through the closed switch.
+	flow := newEstablishedFlow(t)
+	defer flow.close()
+
 	// Kill switch on ⇒ fail closed: no tunnel exists on the scratch
 	// router, so new lookups must die (DoH rejected on the raw wan).
 	if code, _ := post(t, c, base+"/api/vpn/killswitch", map[string]bool{"enabled": true}); code != http.StatusOK {
@@ -171,6 +222,9 @@ func TestLiveDNS(t *testing.T) {
 	}
 	if getDNS().Stats.Failures == 0 {
 		t.Fatal("fail-closed lookup produced no forwarder failure — did the query reach the forwarder?")
+	}
+	if flow.stillWorks() {
+		t.Fatal("pre-existing connection survived the kill switch — conntrack was not flushed")
 	}
 
 	// Kill switch off ⇒ DoH may use the wan again.

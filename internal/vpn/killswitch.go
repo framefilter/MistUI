@@ -14,7 +14,10 @@
 // turns encrypted DNS off, the OUTPUT leak returns and the UI says so.
 package vpn
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 const findLanWanForwarding = `uci show firewall | sed -n "s/^firewall\.\(@forwarding\[[0-9]*\]\)\.src='lan'$/\1/p"`
 
@@ -35,8 +38,19 @@ func (c UCIConnector) SetKillSwitch(ctx context.Context, enabled bool) error {
 			`uci set firewall.@forwarding[-1].src=lan; uci set firewall.@forwarding[-1].dest=wan; ` +
 			`uci commit firewall; /etc/init.d/firewall reload; }`
 	}
-	_, err := c.run.Run(ctx, "sh", "-c", script)
-	return err
+	if _, err := c.run.Run(ctx, "sh", "-c", script); err != nil {
+		return err
+	}
+	// Removing the forwarding only stops NEW connections — fw4 accepts
+	// established flows before zone rules run, so anything already open
+	// would keep leaking. Flush conntrack so every flow re-classifies
+	// against the rules that now exist.
+	if enabled && c.flushCT != nil {
+		if err := c.flushCT(); err != nil {
+			return fmt.Errorf("kill switch set, but conntrack flush failed: %w", err)
+		}
+	}
+	return nil
 }
 
 // KillSwitch reports whether the switch is on (no lan→wan forwarding).

@@ -192,7 +192,9 @@ while one is authorized.
   default / daily / off — always rolled *before* association, §5.1), and
   the kill switch (wg0 in its own `vpn` zone; the switch is the presence
   of the lan→wan forwarding, so state lives in the firewall config and
-  survives reboot by construction). Portal handling ships the detection +
+  survives reboot by construction — plus, since M2.5, a conntrack flush on
+  engage, because fw4 accepts established flows before zone rules run and
+  a rule change alone would let live connections keep leaking). Portal handling ships the detection +
   guided-sign-in half of §5.1; automatic kill-switch relaxing during
   portal mode is deferred — the UI instead tells the user to toggle it,
   which is honest and one line. Live-verified via TestLiveM2Network.
