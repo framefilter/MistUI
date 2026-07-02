@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/framefilter/mistui/internal/dns"
+	"github.com/framefilter/mistui/internal/maint"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
@@ -25,20 +26,24 @@ type Server struct {
 	vpn     vpn.Connector
 	wifi    netcfg.WiFi
 	dns     *dns.Service
+	maint   *maint.Service
 	wgIface string
 	rpID    string // WebAuthn RP ID — the hostname users reach us at
 	origins []string
-	chals   *challenges
+	chals   *ttlSet // outstanding ceremony challenges
+	stepUps *ttlSet // one-shot step-up credits, keyed by session token
 	api     *http.ServeMux
 }
 
 // New builds a Server with sane defaults for the reference hardware. rpID
 // is the WebAuthn relying-party ID (a DNS name, never an IP); origins are
 // the exact browser origins allowed to run ceremonies.
-func New(st *store.Store, conn vpn.Connector, wifi netcfg.WiFi, dnsSvc *dns.Service, rpID string, origins []string) *Server {
+func New(st *store.Store, conn vpn.Connector, wifi netcfg.WiFi, dnsSvc *dns.Service, maintSvc *maint.Service, rpID string, origins []string) *Server {
 	s := &Server{
-		store: st, vpn: conn, wifi: wifi, dns: dnsSvc, wgIface: vpn.Iface,
-		rpID: rpID, origins: origins, chals: newChallenges(),
+		store: st, vpn: conn, wifi: wifi, dns: dnsSvc, maint: maintSvc, wgIface: vpn.Iface,
+		rpID: rpID, origins: origins,
+		chals:   newTTLSet(challengeTTL),
+		stepUps: newTTLSet(stepUpTTL),
 	}
 	// The forwarder starts on the built-in default; restore the user's pick.
 	if v, _ := st.Config(dnsProviderKey); len(v) > 0 {
@@ -58,7 +63,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/login/finish", s.loginFinish)
 	m.HandleFunc("POST /api/login/recovery", s.loginRecovery)
 	m.HandleFunc("POST /api/logout", s.logout)
-	m.HandleFunc("POST /api/recovery/regenerate", s.requireSession(s.recoveryRegenerate))
+	m.HandleFunc("POST /api/stepup/begin", s.requireSession(s.stepUpBegin))
+	m.HandleFunc("POST /api/stepup/finish", s.requireSession(s.stepUpFinish))
+	m.HandleFunc("POST /api/recovery/regenerate", s.requireSession(s.requireStepUp(s.recoveryRegenerate)))
 	m.HandleFunc("POST /api/vpn/import", s.requireSession(s.vpnImport))
 	m.HandleFunc("GET /api/vpn/config", s.requireSession(s.vpnConfig))
 	m.HandleFunc("POST /api/vpn/up", s.requireSession(s.vpnUp))
@@ -79,6 +86,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/privacy/mac-profile", s.requireSession(s.macProfileGet))
 	m.HandleFunc("POST /api/privacy/mac-profile", s.requireSession(s.macProfileSet))
 	m.HandleFunc("POST /api/privacy/roll-mac", s.requireSession(s.rollMAC))
+	m.HandleFunc("GET /api/maintenance/board", s.requireSession(s.maintBoard))
+	m.HandleFunc("POST /api/maintenance/firmware", s.requireSession(s.maintFirmwareUpload))
+	m.HandleFunc("POST /api/maintenance/firmware/flash", s.requireSession(s.requireStepUp(s.maintFirmwareFlash)))
+	m.HandleFunc("POST /api/maintenance/factory-reset", s.requireSession(s.requireStepUp(s.maintFactoryReset)))
 	s.api = m
 }
 

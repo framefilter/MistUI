@@ -89,6 +89,11 @@ button.ghost {
   background: transparent;
   border-color: var(--border);
 }
+button.danger {
+  color: var(--accent-err);
+  background: transparent;
+  border-color: var(--accent-err);
+}
 button:active { transform: translateY(1px); }
 
 .out {

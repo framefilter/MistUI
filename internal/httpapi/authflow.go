@@ -16,6 +16,9 @@ import (
 
 const (
 	challengeTTL = 2 * time.Minute
+	// A step-up credit must be spent quickly: the UI performs the
+	// destructive call in the same interaction as the touch.
+	stepUpTTL = 2 * time.Minute
 	// Sessions expire after sessionIdle of inactivity (slid forward on each
 	// authenticated request) and, regardless of activity, sessionAbsolute
 	// after login. Re-auth is a single WebAuthn touch, so these are short
@@ -26,22 +29,21 @@ const (
 	recoveryHashKey = "recovery_hash"
 )
 
-// challenges tracks outstanding ceremony challenges. In-memory on purpose:
-// a challenge that doesn't survive a daemon restart is a feature.
-type challenges struct {
-	mu sync.Mutex
-	m  map[string]time.Time
+// ttlSet is a mutex-guarded set of single-use, expiring keys. It backs both
+// ceremony challenges and step-up credits. In-memory on purpose: an entry
+// that doesn't survive a daemon restart is a feature.
+type ttlSet struct {
+	mu  sync.Mutex
+	m   map[string]time.Time
+	ttl time.Duration
 }
 
-func newChallenges() *challenges {
-	return &challenges{m: make(map[string]time.Time)}
+func newTTLSet(ttl time.Duration) *ttlSet {
+	return &ttlSet{m: make(map[string]time.Time), ttl: ttl}
 }
 
-func (c *challenges) issue() (string, error) {
-	ch, err := auth.NewToken()
-	if err != nil {
-		return "", err
-	}
+// grant adds (or refreshes) key with the set's TTL.
+func (c *ttlSet) grant(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := time.Now()
@@ -50,17 +52,26 @@ func (c *challenges) issue() (string, error) {
 			delete(c.m, k)
 		}
 	}
-	c.m[ch] = now.Add(challengeTTL)
-	return ch, nil
+	c.m[key] = now.Add(c.ttl)
 }
 
-// consume removes ch and reports whether it was outstanding and unexpired —
-// each challenge answers exactly one ceremony.
-func (c *challenges) consume(ch string) bool {
+// issue mints a fresh random key and grants it — ceremony challenges.
+func (c *ttlSet) issue() (string, error) {
+	key, err := auth.NewToken()
+	if err != nil {
+		return "", err
+	}
+	c.grant(key)
+	return key, nil
+}
+
+// consume removes key and reports whether it was present and unexpired —
+// each entry answers exactly once.
+func (c *ttlSet) consume(key string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	exp, ok := c.m[ch]
-	delete(c.m, ch)
+	exp, ok := c.m[key]
+	delete(c.m, key)
 	return ok && time.Now().Before(exp)
 }
 
@@ -319,6 +330,78 @@ func (s *Server) loginRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": true, "recoveryUsed": true})
+}
+
+// --- step-up re-auth (§4.2) ---
+//
+// Destructive actions require a FRESH WebAuthn assertion, not merely a live
+// session. A successful step-up ceremony grants the session exactly one
+// credit (stepUpTTL to spend it); each gated endpoint consumes it. The
+// endpoints answer 428 when the credit is missing, and the UI treats that
+// as "run the ceremony, then retry" — so an expired credit or a daemon
+// restart degrades to one extra touch, never a dead end. Sessions from the
+// recovery code hold no passkey and so cannot step up until a new one is
+// registered — which is exactly what the recovery flow demands anyway.
+
+func (s *Server) stepUpBegin(w http.ResponseWriter, r *http.Request) {
+	ids, err := s.store.ListCredentialIDs()
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	ch, err := s.chals.issue()
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rpId": s.rpID, "challenge": ch, "credentialIds": ids,
+	})
+}
+
+func (s *Server) stepUpFinish(w http.ResponseWriter, r *http.Request) {
+	var req loginReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if !s.verifyCeremony(w, req.ClientDataJSON, auth.CeremonyGet) {
+		return
+	}
+	if err := auth.VerifyAuthData(req.AuthenticatorData, s.rpID); err != nil {
+		http.Error(w, "denied", http.StatusUnauthorized)
+		return
+	}
+	cose, err := s.store.Credential(req.CredentialID)
+	if err != nil || cose == nil {
+		http.Error(w, "denied", http.StatusUnauthorized)
+		return
+	}
+	pub, err := auth.ParseCOSE(cose)
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	if !auth.VerifyAssertion(pub, req.AuthenticatorData, req.ClientDataJSON, req.Signature) {
+		http.Error(w, "denied", http.StatusUnauthorized)
+		return
+	}
+	s.stepUps.grant(sessionToken(r))
+	writeJSON(w, http.StatusOK, map[string]any{"steppedUp": true})
+}
+
+// requireStepUp gates a destructive handler behind one step-up credit.
+// Callers wrap it inside requireSession.
+func (s *Server) requireStepUp(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.stepUps.consume(sessionToken(r)) {
+			// 428: the UI runs the step-up ceremony and retries.
+			writeJSON(w, http.StatusPreconditionRequired,
+				map[string]any{"stepUpRequired": true})
+			return
+		}
+		next(w, r)
+	}
 }
 
 func (s *Server) recoveryRegenerate(w http.ResponseWriter, r *http.Request) {

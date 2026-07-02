@@ -121,6 +121,45 @@ async function loginPasskey() {
   if (!finish.ok) throw new Error(`finish: ${finish.status}`);
 }
 
+// stepUp runs the fresh-assertion ceremony (§4.2): one passkey touch, one
+// destructive action.
+async function stepUp() {
+  const begin = await api('POST', '/api/stepup/begin');
+  if (!begin.ok) throw new Error(`step-up begin: ${begin.status}`);
+  const o = begin.data;
+  const cred = await navigator.credentials.get({
+    publicKey: {
+      rpId: o.rpId,
+      challenge: b64urlToBuf(o.challenge),
+      allowCredentials: (o.credentialIds || []).map((id) => ({
+        type: 'public-key',
+        id: b64urlToBuf(id),
+      })),
+      userVerification: 'preferred',
+    },
+  });
+  const finish = await api('POST', '/api/stepup/finish', {
+    credentialId: bufToB64url(cred.rawId),
+    authenticatorData: b64(cred.response.authenticatorData),
+    clientDataJSON: b64(cred.response.clientDataJSON),
+    signature: b64(cred.response.signature),
+  });
+  if (!finish.ok) throw new Error(`step-up finish: ${finish.status}`);
+}
+
+// withStepUp calls a destructive endpoint, satisfying the 428 contract:
+// touch first, and if the credit lapsed anyway (expiry, daemon restart),
+// touch once more and retry.
+async function withStepUp(method, path, body) {
+  await stepUp();
+  let r = await api(method, path, body);
+  if (r.status === 428) {
+    await stepUp();
+    r = await api(method, path, body);
+  }
+  return r;
+}
+
 // --- flows ---
 
 async function refresh() {
@@ -179,6 +218,7 @@ async function refreshDash(wifiData) {
   }
   if (ks.ok) $('killswitch').checked = !!ks.data.enabled;
   if (dn.ok) renderDNS(dn.data);
+  refreshMaint();
   if (mm.ok) $('mac-mode').value = mm.data.mode;
   if (mp.ok) {
     const sel = $('mac-profile');
@@ -423,6 +463,94 @@ $('login-recovery').addEventListener('click', async () => {
   $('recovery-input').value = '';
   await refresh();
 });
+
+// --- maintenance (§5 item 7) ---
+
+async function refreshMaint() {
+  const r = await api('GET', '/api/maintenance/board');
+  if (!r.ok) return;
+  const b = r.data.board || {};
+  $('maint-board').textContent =
+    `${b.model || 'unknown device'} · OpenWrt ${b.release || '?'} (${b.target || '?'})`;
+}
+
+$('regen-recovery').addEventListener('click', async () => {
+  try {
+    const r = await withStepUp('POST', '/api/recovery/regenerate');
+    if (!r.ok) { say('regen-out', `failed (${r.status})`); return; }
+    say('regen-out',
+      `${r.data.recoveryCode}\n\nWrite this down now — it replaces the old ` +
+      `code, is shown only once, and works once.`);
+  } catch (e) {
+    say('regen-out', `passkey confirmation failed: ${e.message || e}`);
+  }
+});
+
+$('fw-upload').addEventListener('click', async () => {
+  const file = $('fw-file').files[0];
+  if (!file) { say('fw-out', 'choose a sysupgrade image first'); return; }
+  say('fw-out', `uploading ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
+  $('fw-flash').classList.add('hidden');
+  const res = await fetch('/api/maintenance/firmware', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  });
+  if (res.status === 401) { sessionLapsed(); return; }
+  let data = {};
+  try { data = await res.json(); } catch { /* keep {} */ }
+  if (!res.ok) {
+    say('fw-out', `image rejected: ${data.error || res.status}`);
+    return;
+  }
+  say('fw-out', 'image verified for this device — ready to flash');
+  $('fw-flash').classList.remove('hidden');
+});
+
+$('fw-flash').addEventListener('click', async () => {
+  try {
+    const r = await withStepUp('POST', '/api/maintenance/firmware/flash');
+    if (!r.ok) { say('fw-out', `flash refused: ${r.data.error || r.status}`); return; }
+    say('fw-out', 'flashing… the router reboots itself. This page will ' +
+      'reconnect when it is back (2–4 minutes). Settings are kept.');
+    $('fw-flash').classList.add('hidden');
+    awaitReboot('fw-out');
+  } catch (e) {
+    say('fw-out', `passkey confirmation failed: ${e.message || e}`);
+  }
+});
+
+$('factory-reset').addEventListener('click', async () => {
+  const sure = confirm(
+    'Factory reset erases EVERYTHING on this router:\n\n' +
+    '• all settings, Wi-Fi networks and the VPN config\n' +
+    '• every passkey and the recovery code\n' +
+    '• the device certificate you installed\n\n' +
+    'The router reboots as freshly flashed and must be set up from ' +
+    'scratch. Continue to the passkey confirmation?');
+  if (!sure) return;
+  try {
+    const r = await withStepUp('POST', '/api/maintenance/factory-reset');
+    if (!r.ok) { say('reset-out', `reset refused (${r.status})`); return; }
+    say('reset-out', 'resetting… the router is wiping itself and will ' +
+      'reboot with its default network. This page will go dark.');
+  } catch (e) {
+    say('reset-out', `passkey confirmation failed: ${e.message || e}`);
+  }
+});
+
+// awaitReboot polls health until the device answers again, then reloads.
+async function awaitReboot(outId) {
+  for (let i = 0; i < 60; i++) {
+    await new Promise((res) => setTimeout(res, 5000));
+    try {
+      const h = await api('GET', '/api/health');
+      if (h.ok) { location.reload(); return; }
+    } catch { /* still down */ }
+  }
+  say(outId, 'still unreachable — check the router and reload this page.');
+}
 
 // ifup/ifdown are asynchronous in netifd — poll status until it settles.
 async function pollVpnStatus(wantUp, tries = 10) {

@@ -24,6 +24,7 @@ import (
 	"github.com/framefilter/mistui/internal/certgen"
 	"github.com/framefilter/mistui/internal/dns"
 	"github.com/framefilter/mistui/internal/httpapi"
+	"github.com/framefilter/mistui/internal/maint"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
@@ -61,7 +62,7 @@ func main() {
 	// not fatal — the daemon must stay reachable to show the problem.
 	fwd := dns.NewForwarder(*dnsListen)
 	dnsSvc := dns.NewService(fwd)
-	srv := httpapi.New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dnsSvc, *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
+	srv := httpapi.New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dnsSvc, maint.NewService(), *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
 	handler := srv.Handler(web.FS(), material.CAPath)
 
 	// Daily MAC rotation, when the user has chosen that mode.

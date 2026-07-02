@@ -96,11 +96,15 @@ divergence from BubbleUI is **no LuCI** — see the sole-surface point below.
   unattended browser loses access in minutes, not hours. Passive checks
   (`/api/session`) do not slide the timeout, so polling cannot keep a
   session alive.
-- **Step-up re-auth (planned, M3):** destructive actions — factory reset,
-  enabling SSH, rotating the recovery code — should require a *fresh*
-  WebAuthn assertion even within a live session, not merely ride it. Wired
-  as those endpoints are built; `recovery/regenerate` is the first
-  candidate that exists today.
+- **Step-up re-auth:** destructive actions — factory reset, flashing
+  firmware, rotating the recovery code, and (future) enabling SSH — require
+  a *fresh* WebAuthn assertion, not merely a live session. A step-up
+  ceremony grants the session exactly **one** short-lived credit
+  (in-memory, 2-minute TTL); each gated endpoint consumes it. Endpoints
+  answer 428 when the credit is missing and the UI re-runs the ceremony,
+  so an expired credit or daemon restart costs one extra touch, never a
+  dead end. Recovery-code sessions hold no passkey and so cannot step up
+  until a new one is registered — which the recovery flow demands anyway.
 - **Hostname & TLS.** WebAuthn requires a secure context and a DNS-name
   RP ID (an IP is not a valid RP ID), so the UI lives at **`https://mist.lan`**:
   dnsmasq resolves `mist.lan` to the router's LAN address (uci-defaults).
@@ -145,7 +149,11 @@ missing is something the user simply *cannot* configure (no LuCI fallback).
    Generic (honest LA-random, no hostname) / Apple iPhone / Samsung Galaxy
    / Google Pixel, user-selectable. Schedule: on-join (default) / daily /
    off. Ported from BubbleUI.
-7. **Maintenance** — factory reset, firmware update.
+7. **Maintenance** — factory reset (jffs2reset: wipes settings, passkeys,
+   VPN config, the device CA — back to first boot) and firmware update
+   (upload a sysupgrade image, validated with `sysupgrade --test` before
+   the flash is offered; settings kept, `/etc/mistui` preserved via the
+   package's keep.d entry). Both gated behind step-up re-auth (§4.2).
 
 Interface names (radio/AP/`lan`/`wan`) are read from `board.json`/UCI, never
 hardcoded — they vary per device (the Mango is swconfig: `eth0.1`/`eth0.2`,
@@ -212,6 +220,13 @@ while one is authorized.
   default from the wizard's AP step; switching it off is honest about the
   leak returning. Live-verified via TestLiveDNS (uncached-name oracle
   against the router's own resolver).
+- **M2.6 — maintenance + step-up. ✅** §4.2's step-up re-auth shipped
+  (one-shot credits, 428 contract), gating recovery-code rotation, factory
+  reset, and firmware update (§5 item 7). Live-verified on the Mango the
+  hard way: a real keep-settings flash of the stock 25.12.5 image (the
+  `/etc/mistui` keep.d marker survived; apk-installed packages did not —
+  §8's the-image-is-the-product point, demonstrated) and a real factory
+  reset (overlay verifiably wiped: config, credentials, CA, keys all gone).
 - **M3 — images.** Ready-to-flash factory/sysupgrade images for a small,
   curated set of supported models, composed via the Image Builder with
   LuCI/uhttpd left out (see §8); the per-arch `.apk`/`.ipk` is the build

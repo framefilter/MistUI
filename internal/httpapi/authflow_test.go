@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/framefilter/mistui/internal/dns"
+	"github.com/framefilter/mistui/internal/maint"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
@@ -98,7 +99,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	srv := New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dns.NewService(dns.NewForwarder(dns.ListenAddr)), testRP, []string{testOrigin})
+	srv := New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dns.NewService(dns.NewForwarder(dns.ListenAddr)), maint.NewService(), testRP, []string{testOrigin})
 	ts := httptest.NewServer(srv.api)
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
@@ -157,6 +158,26 @@ func loginPasskey(t *testing.T, c *http.Client, base string, f *fakeAuthenticato
 	})
 	if code != http.StatusOK {
 		t.Fatalf("login/finish: %d %v", code, body)
+	}
+}
+
+// stepUp runs the step-up ceremony for the client's current session.
+func stepUp(t *testing.T, c *http.Client, base string, f *fakeAuthenticator) {
+	t.Helper()
+	code, begin := post(t, c, base+"/api/stepup/begin", nil)
+	if code != http.StatusOK {
+		t.Fatalf("stepup/begin: %d", code)
+	}
+	cd := f.clientData("webauthn.get", begin["challenge"].(string))
+	ad := f.authData(false)
+	code, body := post(t, c, base+"/api/stepup/finish", map[string]string{
+		"credentialId":      base64.RawURLEncoding.EncodeToString(f.credID),
+		"authenticatorData": base64.StdEncoding.EncodeToString(ad),
+		"clientDataJSON":    base64.StdEncoding.EncodeToString(cd),
+		"signature":         base64.StdEncoding.EncodeToString(f.sign(ad, cd)),
+	})
+	if code != http.StatusOK {
+		t.Fatalf("stepup/finish: %d %v", code, body)
 	}
 }
 
@@ -222,7 +243,12 @@ func TestProvisionLoginRecoveryFlow(t *testing.T) {
 		t.Fatalf("recovery code worked twice: %d", code)
 	}
 
-	// An authenticated session can mint a fresh code…
+	// Regenerating is destructive: a live session alone gets 428…
+	if code, _ := post(t, rec, ts.URL+"/api/recovery/regenerate", nil); code != http.StatusPreconditionRequired {
+		t.Fatalf("regenerate without step-up: %d, want 428", code)
+	}
+	// …a fresh WebAuthn touch unlocks exactly one attempt…
+	stepUp(t, rec, ts.URL, f)
 	code, regen := post(t, rec, ts.URL+"/api/recovery/regenerate", nil)
 	newCode, _ := regen["recoveryCode"].(string)
 	if code != http.StatusOK || newCode == "" {

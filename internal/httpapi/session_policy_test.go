@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/framefilter/mistui/internal/dns"
+	"github.com/framefilter/mistui/internal/maint"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
@@ -24,7 +25,7 @@ func sessionHarness(t *testing.T) (*httptest.Server, *http.Client, *store.Store,
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	srv := New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dns.NewService(dns.NewForwarder(dns.ListenAddr)), testRP, []string{testOrigin})
+	srv := New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dns.NewService(dns.NewForwarder(dns.ListenAddr)), maint.NewService(), testRP, []string{testOrigin})
 	ts := httptest.NewServer(srv.api)
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)

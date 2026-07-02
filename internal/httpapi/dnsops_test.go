@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/framefilter/mistui/internal/dns"
+	"github.com/framefilter/mistui/internal/maint"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
@@ -45,6 +46,7 @@ func newDNSHarness(t *testing.T, reply string) (*httptest.Server, *http.Client, 
 		vpn.NewUCIConnectorWithRunner(vpnRec),
 		netcfg.NewWiFiWithRunner(wifiRec),
 		dns.NewServiceWithRunner(dns.NewForwarder(dns.ListenAddr), dnsRec),
+		maint.NewService(),
 		testRP, []string{testOrigin})
 	ts := httptest.NewServer(srv.api)
 	t.Cleanup(ts.Close)

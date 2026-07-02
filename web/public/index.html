@@ -211,6 +211,41 @@
         </div>
         <pre id="mac-out" class="out dim">—</pre>
       </section>
+      <section class="card">
+        <h2>Maintenance</h2>
+        <p id="maint-board" class="dim small">—</p>
+
+        <h3>Recovery code</h3>
+        <p class="dim small">Mints a fresh one-time recovery code and voids
+        the old one. Requires a passkey touch.</p>
+        <div class="row">
+          <button id="regen-recovery" class="ghost">Regenerate recovery code</button>
+        </div>
+        <pre id="regen-out" class="out code hidden"></pre>
+
+        <h3>Firmware</h3>
+        <p class="dim small">Upload a sysupgrade image for this exact device.
+        It is verified before anything is written. Settings are kept.
+        <strong>If the image doesn't include MistUI, there will be no UI
+        after the reboot.</strong></p>
+        <div class="row">
+          <input type="file" id="fw-file" accept=".bin,.img,.itb" />
+          <button id="fw-upload" class="ghost">Upload &amp; verify</button>
+        </div>
+        <pre id="fw-out" class="out dim hidden"></pre>
+        <div class="row">
+          <button id="fw-flash" class="hidden">Flash firmware (touch required)</button>
+        </div>
+
+        <h3>Factory reset</h3>
+        <p class="dim small">Erases everything: settings, passkeys, VPN
+        config, the device certificate. The router reboots as if freshly
+        flashed. Requires a passkey touch.</p>
+        <div class="row">
+          <button id="factory-reset" class="danger">Factory reset…</button>
+        </div>
+        <pre id="reset-out" class="out dim hidden"></pre>
+      </section>
     </div>
 
     <footer class="dim small">
