@@ -33,16 +33,19 @@ Implications, all forced by the hardware:
 
 ```
 Browser (SPA)
-   │  HTTPS
+   │  HTTPS (leaf signed by the on-device CA, name-constrained to mist.lan)
    ▼
-nginx  ──TLS terminate──►  mistd (127.0.0.1:8080, plain HTTP)
-                              │
-                              ├─ bbolt   (/etc/mistui/mistui.db)
-                              ├─ wg-quick / wg   (WireGuard)
-                              └─ ip link         (MAC roll)
+mistd (:443, native TLS — no proxy in front)
+   ├─ bbolt   (/etc/mistui/mistui.db)
+   ├─ wg-quick / wg   (WireGuard)
+   └─ ip link         (MAC roll)
 ```
 
-`mistd` never speaks DSA, switch config, or TLS. It manipulates named UCI
+`mistd` terminates TLS itself with Go's stdlib — an earlier draft put nginx
+in front, but a proxy that exists only to terminate TLS is a daemon, a
+config surface, and ~1 MB of image the 16 MB tier doesn't have to spend.
+
+`mistd` never speaks DSA or switch config. It manipulates named UCI
 interfaces and shells out to standard OpenWRT tools; OpenWRT owns topology.
 That is what lets one package work across every supported device.
 
@@ -61,9 +64,9 @@ divergence from BubbleUI is **no LuCI** — see the sole-surface point below.
   purely hardware-backed (WebAuthn).
 - **MistUI is the *sole* management surface.** *This is the divergence from
   BubbleUI*, which keeps LuCI installed for power users. MistUI's product
-  image ships **without LuCI/uhttpd**; MistUI (behind nginx) is the only web
-  UI. Consequence: MistUI must own all essential device config (§5) — there
-  is no LuCI fallback.
+  image ships **without LuCI/uhttpd**; mistd, serving TLS itself on :443,
+  is the only web UI. Consequence: MistUI must own all essential device
+  config (§5) — there is no LuCI fallback.
 - **SSH is an off-by-default, user-enable option.** When the user turns it on
   *from within MistUI*, dropbear runs **key-based only** (`PasswordAuth no`,
   root login gated, user-managed keys) — never a password login surface.
@@ -87,6 +90,20 @@ divergence from BubbleUI is **no LuCI** — see the sole-surface point below.
   lose every credential *and* the code and the only path is factory reset.
 - Sessions: random 128-bit tokens in bbolt, `HttpOnly; Secure;
   SameSite=Strict` cookies.
+- **Hostname & TLS.** WebAuthn requires a secure context and a DNS-name
+  RP ID (an IP is not a valid RP ID), so the UI lives at **`https://mist.lan`**:
+  dnsmasq resolves `mist.lan` to the router's LAN address (uci-defaults).
+  Browsers refuse WebAuthn on sites with *any* certificate error — clicking
+  through the warning is not enough — so a warning-and-proceed cert can't
+  work. Instead the device mints its own CA at first boot
+  (`internal/certgen`), **name-constrained to `mist.lan`** so trusting it
+  grants no authority over any other site, and serves it at `/ca.pem`.
+  The user installs that CA once per client device (the wizard's
+  "trust this device" step); the TLS leaf is signed by it and auto-renewed.
+  All of it dies with a factory reset.
+- Ceremony hygiene: server-issued single-use challenges (2-min TTL,
+  in-memory), and clientDataJSON origin + type checks and the
+  authenticator-data RP-hash/user-present checks on every ceremony.
 
 ## 5. MVP features
 
@@ -117,9 +134,12 @@ hardcoded — they vary per device (the Mango is swconfig: `eth0.1`/`eth0.2`,
   from a browser; real `wg-quick` config import.
 - **M2 — wizard + privacy.** First-boot flow, scheduled MAC rotation,
   kill switch.
-- **M3 — packaging + distribution.** Per-arch `.apk`/`.ipk`, plus
-  ready-to-flash images for a small, curated set of supported models
-  (see §8). Optionally publish a feed for the OpenWRT firmware selector / ASU.
+- **M3 — images.** Ready-to-flash factory/sysupgrade images for a small,
+  curated set of supported models, composed via the Image Builder with
+  LuCI/uhttpd left out (see §8); the per-arch `.apk`/`.ipk` is the build
+  artifact feeding them, not a separate product. Optionally publish a feed
+  for the OpenWRT firmware selector / ASU (its package list is also
+  composition-time, so the sole-surface guarantee can hold there).
 
 ## 7. Relationship to BubbleUI
 
@@ -137,18 +157,28 @@ flow back upstream.
 
 ## 8. Distribution
 
-MistUI ships through two channels and — unlike BubbleUI — embraces pre-built
-images:
+**Principle: subtraction happens at image-composition time, never at
+runtime.** The product image is *composed without* LuCI/uhttpd and anything
+else the access model (§4.1) forbids; packages are never removed on a live
+device. On squashfs, removing a baked-in package reclaims no flash — it
+burns overlay space writing whiteout markers and leaves config residue —
+and a rip-out script is neither atomic nor verifiable. No MistUI install
+step may depend on removing packages at runtime.
 
-1. **Ready-to-flash images (primary path for the audience).** For a small,
-   curated set of supported models we publish factory / sysupgrade images
-   with MistUI already baked in: flash once, no OpenWRT knowledge required.
-   This is appropriate *because* the model list is deliberately short — a
-   large per-device matrix is what turns a package into a distribution, so
-   we keep the list small on purpose.
-2. **`.apk` / `.ipk` (for existing OpenWRT users).** Install on top of a
-   stock OpenWRT the user already runs, or select it via the firmware
-   selector / ASU with a custom feed.
+**The flashable image is the product.** For a small, curated set of
+supported models we publish factory / sysupgrade images with MistUI baked
+in and the unwanted surfaces absent: flash once, no OpenWRT knowledge
+required. This is appropriate *because* the model list is deliberately
+short — a large per-device matrix is what turns a package into a
+distribution, so we keep the list small on purpose.
+
+The `.apk`/`.ipk` package still exists, but as a **build artifact, not an
+end-user channel**: the Image Builder consumes packages, so producing one is
+simply how the images get made. Installing it on top of an existing OpenWRT
+system is *not* a supported path — it cannot remove that system's baked-in
+LuCI and therefore cannot honor the sole-management-surface guarantee
+(§4.1). Experts may do it anyway; the caveat gets documented, not engineered
+around.
 
 **How the images are built — and why DSA never bites.** Images come from the
 official **OpenWRT Image Builder** for each device profile, with the MistUI

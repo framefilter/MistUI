@@ -102,6 +102,32 @@ button:active { transform: translateY(1px); }
 .dim   { color: var(--fg-dim); }
 .small { font-size: 12px; }
 
+.hidden { display: none; }
+
+/* The one-time recovery code: large and unambiguous. */
+.code {
+  color: var(--accent-warn);
+  font-size: 18px;
+  letter-spacing: 2px;
+  text-align: center;
+  user-select: all;
+}
+
+input {
+  font-family: inherit;
+  font-size: 14px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+details { margin-top: var(--space); }
+summary { cursor: pointer; }
+
 @media (prefers-color-scheme: light) {
   :root {
     --bg:      #f6f8fa;

@@ -73,6 +73,46 @@ func (s *Store) CredentialCount() (int, error) {
 	return n, err
 }
 
+// ListCredentialIDs returns the IDs of every registered credential, for a
+// login ceremony's allowCredentials list.
+func (s *Store) ListCredentialIDs() ([]string, error) {
+	var out []string
+	err := s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketCreds).ForEach(func(k, _ []byte) error {
+			out = append(out, string(k))
+			return nil
+		})
+	})
+	return out, err
+}
+
+// PutConfig stores a small config value, e.g. the recovery-code hash.
+func (s *Store) PutConfig(key string, val []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketConfig).Put([]byte(key), val)
+	})
+}
+
+// Config returns the stored value for key, or nil if absent.
+func (s *Store) Config(key string) ([]byte, error) {
+	var out []byte
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if v := tx.Bucket(bucketConfig).Get([]byte(key)); v != nil {
+			out = append([]byte{}, v...)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// DeleteConfig removes key — how single-use values (the recovery hash) are
+// consumed.
+func (s *Store) DeleteConfig(key string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketConfig).Delete([]byte(key))
+	})
+}
+
 // PutSession records a session token with its absolute expiry.
 func (s *Store) PutSession(token string, expiry time.Time) error {
 	return s.db.Update(func(tx *bolt.Tx) error {

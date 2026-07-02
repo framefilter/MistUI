@@ -1,5 +1,6 @@
 #!/bin/sh /etc/rc.common
-# procd init script for the MistUI daemon.
+# procd init script for the MistUI daemon. mistd terminates TLS itself
+# from the device CA it mints at first boot — there is no proxy in front.
 
 USE_PROCD=1
 START=95
@@ -7,12 +8,13 @@ STOP=10
 
 PROG=/usr/bin/mistd
 DB=/etc/mistui/mistui.db
-ADDR=127.0.0.1:8080
+TLS_DIR=/etc/mistui/tls
+RP=mist.lan
 
 start_service() {
 	[ -d /etc/mistui ] || mkdir -p /etc/mistui
 	procd_open_instance
-	procd_set_param command "$PROG" -addr "$ADDR" -db "$DB"
+	procd_set_param command "$PROG" -tls-addr :443 -tls-dir "$TLS_DIR" -rp "$RP" -db "$DB"
 	procd_set_param respawn
 	procd_set_param stdout 1
 	procd_set_param stderr 1

@@ -46,7 +46,7 @@ internal/vpn/         wg-quick connector
 internal/netcfg/      MAC randomization
 internal/httpapi/     HTTP API + embedded SPA mount
 web/                  the SPA (vanilla, embedded via go:embed)
-package/mistui/       OpenWRT package (Makefile, procd init, uci-defaults, nginx)
+package/mistui/       OpenWRT package (Makefile, procd init, uci-defaults)
 scripts/dev-deploy.sh build for a target + deploy to a live router
 ```
 

@@ -14,24 +14,78 @@
       <span id="status" class="pill">checking…</span>
     </header>
 
-    <section class="card">
-      <h2>VPN</h2>
-      <p class="dim">WireGuard tunnel control.</p>
+    <!-- First boot: no credential exists yet (trust-on-first-use). -->
+    <section id="view-setup" class="card hidden">
+      <h2>Set up your router</h2>
+      <p class="dim">This device has no owner yet. Create a passkey to claim
+      it — that passkey (plus a one-time recovery code) will be the only way
+      in.</p>
       <div class="row">
-        <button id="vpn-up">Connect</button>
-        <button id="vpn-down" class="ghost">Disconnect</button>
+        <button id="setup-create">Create owner passkey</button>
       </div>
-      <pre id="vpn-status" class="out dim">—</pre>
+      <p class="dim small">Browser refusing the passkey prompt? It must fully
+      trust this router first: <a href="/ca.pem">download the device
+      certificate</a>, install it in your system or browser trust store, then
+      reload. It is only ever valid for <code>mist.lan</code>.</p>
+      <pre id="setup-out" class="out dim hidden"></pre>
     </section>
 
-    <section class="card">
-      <h2>Privacy</h2>
-      <p class="dim">Randomize the Wi-Fi MAC address.</p>
+    <!-- Shown exactly once, right after provisioning. -->
+    <section id="view-recovery" class="card hidden">
+      <h2>Your recovery code</h2>
+      <p class="dim">Write this down and keep it offline. It is shown
+      <strong>only now</strong>, works <strong>once</strong>, and is the only
+      way in if you lose every passkey — otherwise: factory reset.</p>
+      <pre id="recovery-code" class="out code"></pre>
       <div class="row">
-        <button id="roll-mac" class="ghost">Roll MAC now</button>
+        <button id="recovery-saved">I saved it — continue</button>
       </div>
-      <pre id="mac-out" class="out dim">—</pre>
     </section>
+
+    <!-- Provisioned, no session. -->
+    <section id="view-login" class="card hidden">
+      <h2>Unlock</h2>
+      <p class="dim">Use your passkey to manage this router.</p>
+      <div class="row">
+        <button id="login-passkey">Unlock with passkey</button>
+      </div>
+      <details class="small">
+        <summary class="dim">Lost your passkey? Use the recovery code</summary>
+        <div class="row">
+          <input id="recovery-input" type="password" placeholder="recovery code"
+                 autocomplete="off" spellcheck="false" />
+          <button id="login-recovery" class="ghost">Recover</button>
+        </div>
+        <p class="dim small">The code works once. After recovering, register
+        a new passkey immediately — a fresh code is issued with it.</p>
+      </details>
+      <p class="dim small">Browser refusing the passkey prompt? It must fully
+      trust this router: <a href="/ca.pem">download the device
+      certificate</a> and install it, then reload.</p>
+      <pre id="login-out" class="out dim hidden"></pre>
+    </section>
+
+    <!-- Authenticated. -->
+    <div id="view-dash" class="hidden">
+      <section class="card">
+        <h2>VPN</h2>
+        <p class="dim">WireGuard tunnel control.</p>
+        <div class="row">
+          <button id="vpn-up">Connect</button>
+          <button id="vpn-down" class="ghost">Disconnect</button>
+        </div>
+        <pre id="vpn-status" class="out dim">—</pre>
+      </section>
+
+      <section class="card">
+        <h2>Privacy</h2>
+        <p class="dim">Randomize the Wi-Fi MAC address.</p>
+        <div class="row">
+          <button id="roll-mac" class="ghost">Roll MAC now</button>
+        </div>
+        <pre id="mac-out" class="out dim">—</pre>
+      </section>
+    </div>
 
     <footer class="dim small">
       MistUI — friendlier, more private travel routing on small hardware.
