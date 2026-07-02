@@ -89,7 +89,18 @@ divergence from BubbleUI is **no LuCI** — see the sole-surface point below.
   single-use, regenerable. No password recovery / email reset / backdoor —
   lose every credential *and* the code and the only path is factory reset.
 - Sessions: random 128-bit tokens in bbolt, `HttpOnly; Secure;
-  SameSite=Strict` cookies.
+  SameSite=Strict` cookies. **Short-lived by design**: a 15-minute idle
+  timeout (slid forward on each authenticated request) plus a 12-hour
+  absolute cap, and a logout endpoint that revokes server-side. Because
+  re-auth is a single WebAuthn touch, sessions are cheap to expire — an
+  unattended browser loses access in minutes, not hours. Passive checks
+  (`/api/session`) do not slide the timeout, so polling cannot keep a
+  session alive.
+- **Step-up re-auth (planned, M3):** destructive actions — factory reset,
+  enabling SSH, rotating the recovery code — should require a *fresh*
+  WebAuthn assertion even within a live session, not merely ride it. Wired
+  as those endpoints are built; `recovery/regenerate` is the first
+  candidate that exists today.
 - **Hostname & TLS.** WebAuthn requires a secure context and a DNS-name
   RP ID (an IP is not a valid RP ID), so the UI lives at **`https://mist.lan`**:
   dnsmasq resolves `mist.lan` to the router's LAN address (uci-defaults).

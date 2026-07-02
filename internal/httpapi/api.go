@@ -51,6 +51,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/login/begin", s.loginBegin)
 	m.HandleFunc("POST /api/login/finish", s.loginFinish)
 	m.HandleFunc("POST /api/login/recovery", s.loginRecovery)
+	m.HandleFunc("POST /api/logout", s.logout)
 	m.HandleFunc("POST /api/recovery/regenerate", s.requireSession(s.recoveryRegenerate))
 	m.HandleFunc("POST /api/vpn/import", s.requireSession(s.vpnImport))
 	m.HandleFunc("GET /api/vpn/config", s.requireSession(s.vpnConfig))
@@ -105,8 +106,7 @@ func sessionToken(r *http.Request) string {
 
 func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		ok, _ := s.store.SessionValid(sessionToken(r))
-		if !ok {
+		if !s.sessionValid(r, true) { // a real request; slide the idle timeout
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -122,8 +122,9 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
-	ok, _ := s.store.SessionValid(sessionToken(r))
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": ok})
+	// Passive check — does not slide the idle timeout, so background polling
+	// can't keep a session alive.
+	writeJSON(w, http.StatusOK, map[string]any{"authenticated": s.sessionValid(r, false)})
 }
 
 const vpnSummaryKey = "vpn_summary"

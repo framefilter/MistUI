@@ -113,30 +113,75 @@ func (s *Store) DeleteConfig(key string) error {
 	})
 }
 
-// PutSession records a session token with its absolute expiry.
-func (s *Store) PutSession(token string, expiry time.Time) error {
+// A session record stores two timestamps, "<issued>|<lastSeen>", so the
+// policy layer can enforce both an idle timeout (from lastSeen) and an
+// absolute cap (from issued). See internal/httpapi for the durations.
+
+// PutSession creates (or replaces) a session with its issue and last-seen
+// times.
+func (s *Store) PutSession(token string, issued, seen time.Time) error {
+	val := issued.Format(time.RFC3339) + "|" + seen.Format(time.RFC3339)
 	return s.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket(bucketSessions).Put([]byte(token), []byte(expiry.Format(time.RFC3339)))
+		return tx.Bucket(bucketSessions).Put([]byte(token), []byte(val))
 	})
 }
 
-// SessionValid reports whether token names a session that has not expired.
-func (s *Store) SessionValid(token string) (bool, error) {
+// Session returns a token's issue and last-seen times. ok is false if the
+// token is absent or the record is unparseable (treated as invalid).
+func (s *Store) Session(token string) (issued, seen time.Time, ok bool, err error) {
 	if token == "" {
-		return false, nil
+		return time.Time{}, time.Time{}, false, nil
 	}
-	var ok bool
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err = s.db.View(func(tx *bolt.Tx) error {
 		v := tx.Bucket(bucketSessions).Get([]byte(token))
 		if v == nil {
 			return nil
 		}
-		exp, err := time.Parse(time.RFC3339, string(v))
-		if err != nil {
+		i, s, found := bytesCut(v, '|')
+		if !found {
 			return nil
 		}
-		ok = time.Now().Before(exp)
+		it, e1 := time.Parse(time.RFC3339, string(i))
+		st, e2 := time.Parse(time.RFC3339, string(s))
+		if e1 != nil || e2 != nil {
+			return nil
+		}
+		issued, seen, ok = it, st, true
 		return nil
 	})
-	return ok, err
+	return issued, seen, ok, err
+}
+
+// BumpSession advances a session's last-seen time (the idle-timeout slide).
+func (s *Store) BumpSession(token string, seen time.Time) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket(bucketSessions)
+		v := b.Get([]byte(token))
+		if v == nil {
+			return nil
+		}
+		issued, _, found := bytesCut(v, '|')
+		if !found {
+			return nil
+		}
+		// v (and issued) is bbolt-owned; build a fresh value to store.
+		val := string(issued) + "|" + seen.Format(time.RFC3339)
+		return b.Put([]byte(token), []byte(val))
+	})
+}
+
+// DeleteSession removes a token — logout and expiry cleanup.
+func (s *Store) DeleteSession(token string) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		return tx.Bucket(bucketSessions).Delete([]byte(token))
+	})
+}
+
+func bytesCut(b []byte, sep byte) (before, after []byte, found bool) {
+	for i, c := range b {
+		if c == sep {
+			return b[:i], b[i+1:], true
+		}
+	}
+	return b, nil, false
 }

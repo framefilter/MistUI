@@ -15,8 +15,14 @@ import (
 )
 
 const (
-	challengeTTL    = 2 * time.Minute
-	sessionTTL      = 12 * time.Hour
+	challengeTTL = 2 * time.Minute
+	// Sessions expire after sessionIdle of inactivity (slid forward on each
+	// authenticated request) and, regardless of activity, sessionAbsolute
+	// after login. Re-auth is a single WebAuthn touch, so these are short
+	// on purpose — the passkey is what makes frequent re-auth cheap.
+	sessionIdle     = 15 * time.Minute
+	sessionAbsolute = 12 * time.Hour
+	sessionBumpMin  = 30 * time.Second // throttle the slide's writes
 	recoveryHashKey = "recovery_hash"
 )
 
@@ -68,8 +74,8 @@ func (s *Server) issueSession(w http.ResponseWriter) error {
 	if err != nil {
 		return err
 	}
-	exp := time.Now().Add(sessionTTL)
-	if err := s.store.PutSession(tok, exp); err != nil {
+	now := time.Now()
+	if err := s.store.PutSession(tok, now, now); err != nil {
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -79,16 +85,56 @@ func (s *Server) issueSession(w http.ResponseWriter) error {
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
-		Expires:  exp,
+		Expires:  now.Add(sessionAbsolute), // the hard cap; idle is enforced server-side
 	})
 	return nil
+}
+
+// sessionValid reports whether the request carries a live session. When
+// slide is true it advances the idle timeout (throttled) — real actions
+// slide, passive checks like /api/session do not, so polling can't keep a
+// session alive forever. Expired tokens are deleted as they're seen.
+func (s *Server) sessionValid(r *http.Request, slide bool) bool {
+	tok := sessionToken(r)
+	issued, seen, ok, err := s.store.Session(tok)
+	if err != nil || !ok {
+		return false
+	}
+	now := time.Now()
+	if now.After(seen.Add(sessionIdle)) || now.After(issued.Add(sessionAbsolute)) {
+		_ = s.store.DeleteSession(tok)
+		return false
+	}
+	if slide && now.Sub(seen) > sessionBumpMin {
+		_ = s.store.BumpSession(tok, now)
+	}
+	return true
+}
+
+// logout revokes the current session server-side and clears the cookie. It
+// is intentionally not session-gated: an already-expired session should
+// still be able to clear its stale cookie.
+func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	if tok := sessionToken(r); tok != "" {
+		_ = s.store.DeleteSession(tok)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookie,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- registration (TOFU) ---
 
 func (s *Server) registerBegin(w http.ResponseWriter, r *http.Request) {
 	if s.provisioned() {
-		if ok, _ := s.store.SessionValid(sessionToken(r)); !ok {
+		if !s.sessionValid(r, false) {
 			http.Error(w, "already provisioned", http.StatusForbidden)
 			return
 		}
@@ -118,7 +164,7 @@ type registerReq struct {
 func (s *Server) registerFinish(w http.ResponseWriter, r *http.Request) {
 	first := !s.provisioned()
 	if !first {
-		if ok, _ := s.store.SessionValid(sessionToken(r)); !ok {
+		if !s.sessionValid(r, false) {
 			http.Error(w, "already provisioned", http.StatusForbidden)
 			return
 		}

@@ -18,6 +18,11 @@ const b64urlToBuf = (s) => {
 const bufToB64url = (buf) =>
   b64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
+// Auth endpoints legitimately return 401 as part of their flow; every other
+// 401 means the session lapsed (idle timeout), so we bounce to the lock
+// screen instead of showing a cryptic error.
+const AUTH_PATHS = ['/api/login', '/api/register', '/api/session'];
+
 async function api(method, path, body) {
   const res = await fetch(path, {
     method,
@@ -28,7 +33,21 @@ async function api(method, path, body) {
   const text = await res.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
+  if (res.status === 401 && !AUTH_PATHS.some((p) => path.startsWith(p))) {
+    sessionLapsed();
+  }
   return { ok: res.ok, status: res.status, data };
+}
+
+let lapsing = false;
+function sessionLapsed() {
+  if (lapsing) return; // avoid a storm from concurrent calls
+  lapsing = true;
+  setStatus('locked', 'warn');
+  $('lock').classList.add('hidden');
+  show('view-login');
+  say('login-out', 'Session timed out — unlock again to continue.');
+  setTimeout(() => { lapsing = false; }, 1000);
 }
 
 // --- view plumbing ---
@@ -105,6 +124,7 @@ async function loginPasskey() {
 // --- flows ---
 
 async function refresh() {
+  $('lock').classList.add('hidden'); // shown only once authenticated
   const h = await api('GET', '/api/health');
   if (!h.ok) { setStatus('offline', 'err'); return; }
 
@@ -123,11 +143,13 @@ async function refresh() {
   const wifi = await api('GET', '/api/wifi/status');
   if (wifi.ok && !wifi.data.apEnabled) {
     setStatus('setup', 'warn');
+    $('lock').classList.remove('hidden');
     show('view-wizard');
     wizardStep(1);
     return;
   }
   setStatus('ready', 'ok');
+  $('lock').classList.remove('hidden');
   show('view-dash');
   await refreshDash(wifi.ok ? wifi.data : {});
 }
@@ -276,6 +298,13 @@ $('wiz-vpn-import').addEventListener('click', async () => {
 $('wiz-skip-vpn').addEventListener('click', () => refresh());
 
 // --- dashboard controls ---
+
+$('lock').addEventListener('click', async () => {
+  await api('POST', '/api/logout');
+  $('lock').classList.add('hidden');
+  setStatus('locked', 'warn');
+  show('view-login');
+});
 
 $('dash-portal-recheck').addEventListener('click', () => checkPortal('dash'));
 
