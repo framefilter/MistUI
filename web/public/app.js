@@ -150,9 +150,8 @@ async function refreshDash(wifiData) {
     $('vpn-summary').classList.remove('hidden');
     $('vpn-import-details').open = false;
   } else if (c.ok) {
-    $('vpn-summary').textContent = 'no tunnel configured yet — import one below';
+    $('vpn-summary').textContent = 'no tunnel configured yet';
     $('vpn-summary').classList.remove('hidden');
-    $('vpn-import-details').open = true;
   }
   if (ks.ok) $('killswitch').checked = !!ks.data.enabled;
   if (mm.ok) $('mac-mode').value = mm.data.mode;
