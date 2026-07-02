@@ -116,7 +116,8 @@ missing is something the user simply *cannot* configure (no LuCI fallback).
 2. **Secure login** — minimal WebAuthn (§4.2), plus the key-only SSH toggle.
 3. **Network / uplink** — join an upstream/hotel Wi-Fi (STA), set the travel
    SSID + password (AP), WAN/LAN basics. Single 2.4 GHz radio on the Mango,
-   so AP+STA share the band (§2).
+   so AP+STA share the band (§2). Includes captive-portal handling (§5.1) —
+   hotel networks are the primary use case, and most of them gate access.
 4. **WireGuard** — import a config, connect/disconnect, kill switch.
 5. **DNS** — encrypted DNS (DoH/DoT) default.
 6. **MAC privacy** — randomize the Wi-Fi MAC; on-demand now, scheduled next.
@@ -125,6 +126,33 @@ missing is something the user simply *cannot* configure (no LuCI fallback).
 Interface names (radio/AP/`lan`/`wan`) are read from `board.json`/UCI, never
 hardcoded — they vary per device (the Mango is swconfig: `eth0.1`/`eth0.2`,
 `wlan0`), the same "ask the platform" pattern BubbleUI uses.
+
+### 5.1 Captive portals: portal mode, not a proxy
+
+No proxying is needed and none is built. The router joins the hotel network
+as a STA, so the portal sees *the router's* MAC; when any client behind NAT
+completes the sign-in, the authorization lands on the router and unlocks the
+uplink for everyone behind it. The portal page itself flows through NAT like
+any other page. What actually breaks portals is MistUI's own posture: the
+kill switch (portals need raw pre-VPN traffic), encrypted DNS (portals
+announce themselves by hijacking plaintext DNS), and MAC randomization
+(rolling after sign-in discards the authorization).
+
+So `mistd` runs an explicit **portal-mode state machine** on every uplink
+join:
+
+1. **Probe.** HTTP request expecting 204 (plus RFC 8910's DHCP option when
+   present). A redirect ⇒ captive, and the redirect target is the portal URL.
+2. **Portal mode.** VPN held down, direct WAN allowed, encrypted-DNS
+   enforcement relaxed so the hijack can work. The UI says plainly: "this
+   network requires a sign-in; your traffic is unprotected until it's done"
+   — with the detected portal link. No pretense of filtering portal traffic;
+   an honest, bounded window instead.
+3. **Clear.** Re-probe until connectivity is real, then bring up the VPN and
+   kill switch and exit portal mode.
+
+Corollary policy: the STA MAC is rolled *before* joining an uplink, never
+while one is authorized.
 
 ## 6. Milestones
 
