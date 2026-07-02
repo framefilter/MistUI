@@ -1,0 +1,26 @@
+#!/bin/sh
+# First-boot wiring for MistUI. Runs once on install, then deletes itself.
+# Keeps strictly to UCI — no DSA/switch assumptions, so it works on any
+# OpenWRT-supported device.
+
+set -e
+
+# Allow the LAN to reach the TLS vhost.
+if ! uci -q get firewall.mistui_https >/dev/null; then
+	uci -q batch <<-EOF
+		set firewall.mistui_https=rule
+		set firewall.mistui_https.name='Allow-MistUI-HTTPS'
+		set firewall.mistui_https.src='lan'
+		set firewall.mistui_https.proto='tcp'
+		set firewall.mistui_https.dest_port='443'
+		set firewall.mistui_https.target='ACCEPT'
+		commit firewall
+	EOF
+fi
+
+# Enable and start the daemon + reload nginx so the vhost is live.
+/etc/init.d/mistd enable
+/etc/init.d/mistd start
+[ -x /etc/init.d/nginx ] && /etc/init.d/nginx reload || true
+
+exit 0

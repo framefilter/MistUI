@@ -1,0 +1,12 @@
+# Binaries / build output
+/mistd
+/tmp/
+*.test
+*.out
+
+# Local dev database
+*.db
+
+# Editor / OS cruft
+.DS_Store
+*.swp
