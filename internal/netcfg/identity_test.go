@@ -2,6 +2,7 @@ package netcfg
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -34,43 +35,48 @@ func TestGenericIdentityIsLocallyAdministered(t *testing.T) {
 	}
 }
 
-func TestVendorIdentityUsesRealOUIAndHostname(t *testing.T) {
-	cases := map[string]struct {
-		ouiPrefixes []string
-		hostPrefix  string
-	}{
-		"apple":   {[]string{"3c:15:c2", "40:6c:8f", "f0:18:98", "a4:83:e7", "ac:bc:32"}, "iPhone"},
-		"samsung": {[]string{"5c:0a:5b", "88:32:9b", "e8:50:8b", "34:23:ba"}, "Galaxy-"},
-		"pixel":   {[]string{"3c:5a:b4", "f4:f5:d8", "f8:8f:ca", "00:1a:11"}, "Pixel-"},
+// poolPrefixes returns the "xx:xx:xx" prefixes for a profile's OUI pool.
+func poolPrefixes(key string) map[string]bool {
+	m := map[string]bool{}
+	for _, o := range profileByKey(key).ouis {
+		m[fmt.Sprintf("%02x:%02x:%02x", o[0], o[1], o[2])] = true
 	}
-	for profile, want := range cases {
+	return m
+}
+
+func TestVendorIdentityUsesRealOUIAndHostname(t *testing.T) {
+	hostPrefix := map[string]string{"apple": "iPhone", "samsung": "Galaxy", "pixel": "Pixel"}
+	for _, profile := range []string{"apple", "samsung", "pixel"} {
+		pool := poolPrefixes(profile)
+		if len(pool) < 50 {
+			t.Fatalf("%s pool is only %d OUIs — expected deep pools from the IEEE registry", profile, len(pool))
+		}
 		sawOUIs := map[string]bool{}
-		for i := 0; i < 60; i++ {
+		sawNames := map[string]bool{}
+		for i := 0; i < 200; i++ {
 			id, err := GenerateIdentity(profile)
 			if err != nil {
 				t.Fatal(err)
 			}
-			// A real vendor OUI is globally administered: LA bit clear.
 			if o := firstOctet(t, id.MAC); o&0x02 != 0 {
 				t.Errorf("%s MAC %s has the locally-administered bit set", profile, id.MAC)
 			}
 			prefix := id.MAC[0:8]
-			var matched bool
-			for _, p := range want.ouiPrefixes {
-				if prefix == p {
-					matched = true
-				}
-			}
-			if !matched {
+			if !pool[prefix] {
 				t.Errorf("%s MAC %s uses an OUI outside the pool", profile, id.MAC)
 			}
 			sawOUIs[prefix] = true
-			if !strings.HasPrefix(id.Hostname, want.hostPrefix) {
-				t.Errorf("%s hostname %q lacks prefix %q", profile, id.Hostname, want.hostPrefix)
+			sawNames[id.Hostname] = true
+			if !strings.Contains(id.Hostname, hostPrefix[profile]) {
+				t.Errorf("%s hostname %q missing %q", profile, id.Hostname, hostPrefix[profile])
 			}
 		}
-		if len(sawOUIs) < 2 && len(want.ouiPrefixes) > 1 {
-			t.Errorf("%s never varied its OUI across 60 draws (%v)", profile, sawOUIs)
+		// Deep pool → many distinct OUIs and hostnames across 200 draws.
+		if len(sawOUIs) < 20 {
+			t.Errorf("%s varied its OUI only %d times in 200 draws", profile, len(sawOUIs))
+		}
+		if len(sawNames) < 2 {
+			t.Errorf("%s never varied its hostname", profile)
 		}
 	}
 }

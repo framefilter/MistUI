@@ -1,9 +1,27 @@
 package netcfg
 
+//go:generate go run ./gen/gen_ouis.go
+
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 )
+
+// decodeOUIs unpacks a generated hex constant into 3-byte prefixes. It
+// panics on malformed input — the data is generated and compiled in, so a
+// failure is a build-time bug, never a runtime condition.
+func decodeOUIs(h string) [][3]byte {
+	raw, err := hex.DecodeString(h)
+	if err != nil || len(raw)%3 != 0 {
+		panic("netcfg: corrupt generated OUI data")
+	}
+	out := make([][3]byte, len(raw)/3)
+	for i := range out {
+		copy(out[i][:], raw[i*3:i*3+3])
+	}
+	return out
+}
 
 // Identity is the fingerprint the upstream (hotel) network sees: the STA
 // MAC and the DHCP hostname, generated together so a spoofed vendor OUI is
@@ -30,22 +48,33 @@ type profile struct {
 	names []string
 }
 
+// OUI pools come from the IEEE registry (oui_data.go, regenerate with
+// `go generate`). Hostnames are a spread of plausible real models so a
+// rolled identity doesn't repeat a single tell-tale name.
 var profiles = []profile{
 	{key: "generic", label: "Generic randomized"},
 	{
 		key: "apple", label: "Apple iPhone",
-		ouis:  [][3]byte{{0x3c, 0x15, 0xc2}, {0x40, 0x6c, 0x8f}, {0xf0, 0x18, 0x98}, {0xa4, 0x83, 0xe7}, {0xac, 0xbc, 0x32}},
-		names: []string{"iPhone"},
+		ouis: decodeOUIs(appleOUIHex),
+		// iOS sends the user-set device name; "iPhone" is the default and
+		// overwhelmingly the most common, with a few named variants.
+		names: []string{"iPhone", "iPhone", "iPhone", "iPhones-iPhone", "Johns-iPhone", "iPhone-15", "iPhone-14"},
 	},
 	{
 		key: "samsung", label: "Samsung Galaxy",
-		ouis:  [][3]byte{{0x5c, 0x0a, 0x5b}, {0x88, 0x32, 0x9b}, {0xe8, 0x50, 0x8b}, {0x34, 0x23, 0xba}},
-		names: []string{"Galaxy-S24", "Galaxy-S23", "Galaxy-S22", "Galaxy-A54"},
+		ouis: decodeOUIs(samsungOUIHex),
+		names: []string{
+			"Galaxy-S24", "Galaxy-S24-Ultra", "Galaxy-S23", "Galaxy-S23-FE",
+			"Galaxy-S22", "Galaxy-A54", "Galaxy-A34", "Galaxy-Z-Flip5", "Galaxy-Note20",
+		},
 	},
 	{
 		key: "pixel", label: "Google Pixel",
-		ouis:  [][3]byte{{0x3c, 0x5a, 0xb4}, {0xf4, 0xf5, 0xd8}, {0xf8, 0x8f, 0xca}, {0x00, 0x1a, 0x11}},
-		names: []string{"Pixel-8", "Pixel-8-Pro", "Pixel-7", "Pixel-6a"},
+		ouis: decodeOUIs(googleOUIHex),
+		names: []string{
+			"Pixel-8", "Pixel-8-Pro", "Pixel-8a", "Pixel-7", "Pixel-7-Pro",
+			"Pixel-7a", "Pixel-6", "Pixel-6a", "Pixel-Fold",
+		},
 	},
 }
 
