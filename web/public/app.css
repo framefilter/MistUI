@@ -113,7 +113,7 @@ button:active { transform: translateY(1px); }
   user-select: all;
 }
 
-input {
+input, textarea {
   font-family: inherit;
   font-size: 14px;
   color: var(--fg);
@@ -123,6 +123,12 @@ input {
   padding: 6px 10px;
   flex: 1;
   min-width: 0;
+}
+textarea {
+  width: 100%;
+  margin-top: var(--space);
+  font-size: 12px;
+  resize: vertical;
 }
 
 details { margin-top: var(--space); }

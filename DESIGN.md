@@ -37,7 +37,7 @@ Browser (SPA)
    ▼
 mistd (:443, native TLS — no proxy in front)
    ├─ bbolt   (/etc/mistui/mistui.db)
-   ├─ wg-quick / wg   (WireGuard)
+   ├─ uci / ifup / wg (WireGuard via netifd proto wireguard)
    └─ ip link         (MAC roll)
 ```
 
@@ -158,8 +158,11 @@ while one is authorized.
 
 - **M0 — walking skeleton (current).** One binary, builds host + `mipsle`,
   serves the SPA, login + WireGuard + MAC-roll endpoints. ✅
-- **M1 — on hardware.** Runs on a stock-OpenWRT Mango; wire login end to end
-  from a browser; real `wg-quick` config import.
+- **M1 — on hardware. ✅** Runs on a stock-OpenWRT Mango; login end to end
+  from a real browser; WireGuard import (wg-quick *format*, applied as UCI
+  `proto wireguard` — wg-quick itself needs bash and doesn't exist on
+  OpenWRT). Verified by an opt-in live E2E test (`MISTUI_E2E_BASE`) that
+  drives registration → login → import → ifup → ifdown against the device.
 - **M2 — wizard + privacy.** First-boot flow, scheduled MAC rotation,
   kill switch.
 - **M3 — images.** Ready-to-flash factory/sysupgrade images for a small,

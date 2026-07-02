@@ -52,7 +52,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	srv := httpapi.New(st, vpn.ExecConnector{}, *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
+	srv := httpapi.New(st, vpn.NewUCIConnector(), *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
 	handler := srv.Handler(web.FS(), material.CAPath)
 
 	errs := make(chan error, 2)

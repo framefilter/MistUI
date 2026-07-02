@@ -121,10 +121,25 @@ async function refresh() {
   }
   setStatus('ready', 'ok');
   show('view-dash');
-  const v = await api('GET', '/api/vpn/status');
+  const [v, c] = await Promise.all([
+    api('GET', '/api/vpn/status'),
+    api('GET', '/api/vpn/config'),
+  ]);
   $('vpn-status').textContent = v.ok
     ? (v.data.up ? (v.data.detail || 'connected') : 'disconnected')
     : 'status unavailable';
+  if (c.ok && c.data.configured) {
+    const s = c.data.summary || {};
+    $('vpn-summary').textContent =
+      `configured — endpoint ${(s.endpoints || []).join(', ') || 'n/a'}; ` +
+      `tunnel routes ${(s.allowedIPs || []).join(', ') || 'n/a'}`;
+    $('vpn-summary').classList.remove('hidden');
+    $('vpn-import-details').open = false;
+  } else if (c.ok) {
+    $('vpn-summary').textContent = 'no tunnel configured yet — import one below';
+    $('vpn-summary').classList.remove('hidden');
+    $('vpn-import-details').open = true;
+  }
 }
 
 $('setup-create').addEventListener('click', async () => {
@@ -168,14 +183,46 @@ $('login-recovery').addEventListener('click', async () => {
   await refresh();
 });
 
+// ifup/ifdown are asynchronous in netifd — poll status until it settles.
+async function pollVpnStatus(wantUp, tries = 10) {
+  for (let i = 0; i < tries; i++) {
+    const v = await api('GET', '/api/vpn/status');
+    if (v.ok && v.data.up === wantUp) {
+      $('vpn-status').textContent = wantUp ? (v.data.detail || 'connected') : 'disconnected';
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  $('vpn-status').textContent = wantUp
+    ? 'still connecting… (check again shortly)'
+    : 'still disconnecting…';
+}
+
 $('vpn-up').addEventListener('click', async () => {
   const r = await api('POST', '/api/vpn/up');
-  $('vpn-status').textContent = r.ok ? `up (${r.data.iface})` : `error ${r.status}`;
+  if (!r.ok) { $('vpn-status').textContent = `error ${r.status}`; return; }
+  $('vpn-status').textContent = 'connecting…';
+  await pollVpnStatus(true);
 });
 
 $('vpn-down').addEventListener('click', async () => {
   const r = await api('POST', '/api/vpn/down');
-  $('vpn-status').textContent = r.ok ? `down (${r.data.iface})` : `error ${r.status}`;
+  if (!r.ok) { $('vpn-status').textContent = `error ${r.status}`; return; }
+  $('vpn-status').textContent = 'disconnecting…';
+  await pollVpnStatus(false);
+});
+
+$('vpn-import').addEventListener('click', async () => {
+  const config = $('vpn-conf').value.trim();
+  if (!config) return;
+  const r = await api('POST', '/api/vpn/import', { config });
+  if (!r.ok) {
+    say('vpn-import-out', r.data.error || `import failed (${r.status})`);
+    return;
+  }
+  $('vpn-conf').value = '';
+  $('vpn-import-out').classList.add('hidden');
+  await refresh();
 });
 
 $('roll-mac').addEventListener('click', async () => {

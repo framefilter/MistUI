@@ -70,11 +70,24 @@
       <section class="card">
         <h2>VPN</h2>
         <p class="dim">WireGuard tunnel control.</p>
+        <p id="vpn-summary" class="dim small hidden"></p>
         <div class="row">
           <button id="vpn-up">Connect</button>
           <button id="vpn-down" class="ghost">Disconnect</button>
         </div>
         <pre id="vpn-status" class="out dim">—</pre>
+        <details id="vpn-import-details">
+          <summary class="dim small">Import WireGuard configuration</summary>
+          <p class="dim small">Paste the <code>.conf</code> your VPN provider
+          exported (wg-quick format). Replaces any existing tunnel config.
+          The private key is stored only in the router's system config.</p>
+          <textarea id="vpn-conf" rows="8" spellcheck="false"
+                    placeholder="[Interface]&#10;PrivateKey = …&#10;Address = …&#10;&#10;[Peer]&#10;PublicKey = …&#10;AllowedIPs = 0.0.0.0/0&#10;Endpoint = …"></textarea>
+          <div class="row">
+            <button id="vpn-import">Import</button>
+          </div>
+          <pre id="vpn-import-out" class="out dim hidden"></pre>
+        </details>
       </section>
 
       <section class="card">

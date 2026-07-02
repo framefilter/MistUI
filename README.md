@@ -42,7 +42,7 @@ Hardware bring-up, the first-boot wizard, and config import come next.
 cmd/mistd/            the daemon — main entrypoint
 internal/store/       bbolt-backed credential/session store
 internal/auth/        minimal WebAuthn (COSE parse + assertion verify)
-internal/vpn/         wg-quick connector
+internal/vpn/         WireGuard: wg-quick conf import, applied as UCI (netifd)
 internal/netcfg/      MAC randomization
 internal/httpapi/     HTTP API + embedded SPA mount
 web/                  the SPA (vanilla, embedded via go:embed)

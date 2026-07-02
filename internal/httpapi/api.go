@@ -52,6 +52,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/login/finish", s.loginFinish)
 	m.HandleFunc("POST /api/login/recovery", s.loginRecovery)
 	m.HandleFunc("POST /api/recovery/regenerate", s.requireSession(s.recoveryRegenerate))
+	m.HandleFunc("POST /api/vpn/import", s.requireSession(s.vpnImport))
+	m.HandleFunc("GET /api/vpn/config", s.requireSession(s.vpnConfig))
 	m.HandleFunc("POST /api/vpn/up", s.requireSession(s.vpnUp))
 	m.HandleFunc("POST /api/vpn/down", s.requireSession(s.vpnDown))
 	m.HandleFunc("GET /api/vpn/status", s.requireSession(s.vpnStatus))
@@ -111,6 +113,54 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 	ok, _ := s.store.SessionValid(sessionToken(r))
 	writeJSON(w, http.StatusOK, map[string]any{"authenticated": ok})
+}
+
+const vpnSummaryKey = "vpn_summary"
+
+// vpnImport parses a pasted wg-quick config, applies it as UCI, and stores
+// only the sanitized summary in bbolt — key material lives in UCI alone.
+func (s *Server) vpnImport(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Config string `json:"config"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Config == "" {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	cfg, err := vpn.ParseConfig(req.Config)
+	if err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := s.vpn.Import(ctx, cfg); err != nil {
+		slog.Error("vpn import", "err", err)
+		http.Error(w, "import failed", http.StatusBadGateway)
+		return
+	}
+	summary, err := json.Marshal(cfg.Summary())
+	if err == nil {
+		err = s.store.PutConfig(vpnSummaryKey, summary)
+	}
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"imported": true, "summary": cfg.Summary()})
+}
+
+func (s *Server) vpnConfig(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.store.Config(vpnSummaryKey)
+	if err != nil {
+		http.Error(w, "internal", http.StatusInternalServerError)
+		return
+	}
+	if raw == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"configured": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": true, "summary": json.RawMessage(raw)})
 }
 
 func (s *Server) vpnUp(w http.ResponseWriter, r *http.Request) {

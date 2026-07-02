@@ -29,6 +29,8 @@ const (
 type fakeAuthenticator struct {
 	key    *ecdsa.PrivateKey
 	credID []byte
+	rp     string
+	origin string
 }
 
 func newFakeAuthenticator(t *testing.T) *fakeAuthenticator {
@@ -37,18 +39,18 @@ func newFakeAuthenticator(t *testing.T) *fakeAuthenticator {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &fakeAuthenticator{key: key, credID: []byte("fake-cred-1")}
+	return &fakeAuthenticator{key: key, credID: []byte("fake-cred-1"), rp: testRP, origin: testOrigin}
 }
 
 func (f *fakeAuthenticator) clientData(ceremony, challenge string) []byte {
 	b, _ := json.Marshal(map[string]string{
-		"type": ceremony, "challenge": challenge, "origin": testOrigin,
+		"type": ceremony, "challenge": challenge, "origin": f.origin,
 	})
 	return b
 }
 
 func (f *fakeAuthenticator) authData(withCred bool) []byte {
-	h := sha256.Sum256([]byte(testRP))
+	h := sha256.Sum256([]byte(f.rp))
 	ad := append([]byte{}, h[:]...)
 	flags := byte(0x01) // UP
 	if withCred {
@@ -94,7 +96,7 @@ func newTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	srv := New(st, vpn.ExecConnector{}, testRP, []string{testOrigin})
+	srv := New(st, vpn.NewUCIConnector(), testRP, []string{testOrigin})
 	ts := httptest.NewServer(srv.api)
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
@@ -119,14 +121,14 @@ func post(t *testing.T, c *http.Client, url string, body any) (int, map[string]a
 	return res.StatusCode, out
 }
 
-func register(t *testing.T, c *http.Client, ts *httptest.Server, f *fakeAuthenticator) map[string]any {
+func register(t *testing.T, c *http.Client, base string, f *fakeAuthenticator) map[string]any {
 	t.Helper()
-	code, begin := post(t, c, ts.URL+"/api/register/begin", nil)
+	code, begin := post(t, c, base+"/api/register/begin", nil)
 	if code != http.StatusOK {
 		t.Fatalf("register/begin: %d", code)
 	}
 	cd := f.clientData("webauthn.create", begin["challenge"].(string))
-	code, finish := post(t, c, ts.URL+"/api/register/finish", map[string]string{
+	code, finish := post(t, c, base+"/api/register/finish", map[string]string{
 		"clientDataJSON":    base64.StdEncoding.EncodeToString(cd),
 		"attestationObject": base64.StdEncoding.EncodeToString(f.attestationObject()),
 	})
@@ -136,6 +138,26 @@ func register(t *testing.T, c *http.Client, ts *httptest.Server, f *fakeAuthenti
 	return finish
 }
 
+// loginPasskey runs the full login ceremony, failing the test on any error.
+func loginPasskey(t *testing.T, c *http.Client, base string, f *fakeAuthenticator) {
+	t.Helper()
+	code, begin := post(t, c, base+"/api/login/begin", nil)
+	if code != http.StatusOK {
+		t.Fatalf("login/begin: %d", code)
+	}
+	cd := f.clientData("webauthn.get", begin["challenge"].(string))
+	ad := f.authData(false)
+	code, body := post(t, c, base+"/api/login/finish", map[string]string{
+		"credentialId":      base64.RawURLEncoding.EncodeToString(f.credID),
+		"authenticatorData": base64.StdEncoding.EncodeToString(ad),
+		"clientDataJSON":    base64.StdEncoding.EncodeToString(cd),
+		"signature":         base64.StdEncoding.EncodeToString(f.sign(ad, cd)),
+	})
+	if code != http.StatusOK {
+		t.Fatalf("login/finish: %d %v", code, body)
+	}
+}
+
 // --- tests ---
 
 func TestProvisionLoginRecoveryFlow(t *testing.T) {
@@ -143,7 +165,7 @@ func TestProvisionLoginRecoveryFlow(t *testing.T) {
 	f := newFakeAuthenticator(t)
 
 	// TOFU provisioning issues the one-time recovery code and a session.
-	finish := register(t, owner, ts, f)
+	finish := register(t, owner, ts.URL, f)
 	recovery, _ := finish["recoveryCode"].(string)
 	if recovery == "" {
 		t.Fatal("first registration returned no recovery code")
@@ -221,7 +243,7 @@ func TestLoginRejectsWrongOriginAndUnprovisioned(t *testing.T) {
 	}
 
 	f := newFakeAuthenticator(t)
-	register(t, c, ts, f)
+	register(t, c, ts.URL, f)
 
 	// Ceremony from a hostile origin must fail even with a valid signature.
 	jar, _ := cookiejar.New(nil)
