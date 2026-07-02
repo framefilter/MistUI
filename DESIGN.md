@@ -163,8 +163,15 @@ while one is authorized.
   `proto wireguard` — wg-quick itself needs bash and doesn't exist on
   OpenWRT). Verified by an opt-in live E2E test (`MISTUI_E2E_BASE`) that
   drives registration → login → import → ifup → ifdown against the device.
-- **M2 — wizard + privacy.** First-boot flow, scheduled MAC rotation,
-  kill switch.
+- **M2 — wizard + privacy. ✅** First-boot flow (travel SSID → uplink with
+  scan + captive-portal detection → VPN import), MAC rotation (on-join
+  default / daily / off — always rolled *before* association, §5.1), and
+  the kill switch (wg0 in its own `vpn` zone; the switch is the presence
+  of the lan→wan forwarding, so state lives in the firewall config and
+  survives reboot by construction). Portal handling ships the detection +
+  guided-sign-in half of §5.1; automatic kill-switch relaxing during
+  portal mode is deferred — the UI instead tells the user to toggle it,
+  which is honest and one line. Live-verified via TestLiveM2Network.
 - **M3 — images.** Ready-to-flash factory/sysupgrade images for a small,
   curated set of supported models, composed via the Image Builder with
   LuCI/uhttpd left out (see §8); the per-arch `.apk`/`.ipk` is the build

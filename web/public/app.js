@@ -33,7 +33,7 @@ async function api(method, path, body) {
 
 // --- view plumbing ---
 
-const VIEWS = ['view-setup', 'view-recovery', 'view-login', 'view-dash'];
+const VIEWS = ['view-setup', 'view-recovery', 'view-login', 'view-wizard', 'view-dash'];
 function show(view) {
   for (const v of VIEWS) $(v).classList.toggle('hidden', v !== view);
 }
@@ -119,11 +119,25 @@ async function refresh() {
     show('view-login');
     return;
   }
+  // Authenticated: wizard until the travel network exists, then dashboard.
+  const wifi = await api('GET', '/api/wifi/status');
+  if (wifi.ok && !wifi.data.apEnabled) {
+    setStatus('setup', 'warn');
+    show('view-wizard');
+    wizardStep(1);
+    return;
+  }
   setStatus('ready', 'ok');
   show('view-dash');
-  const [v, c] = await Promise.all([
+  await refreshDash(wifi.ok ? wifi.data : {});
+}
+
+async function refreshDash(wifiData) {
+  const [v, c, ks, mm] = await Promise.all([
     api('GET', '/api/vpn/status'),
     api('GET', '/api/vpn/config'),
+    api('GET', '/api/vpn/killswitch'),
+    api('GET', '/api/privacy/mac-schedule'),
   ]);
   $('vpn-status').textContent = v.ok
     ? (v.data.up ? (v.data.detail || 'connected') : 'disconnected')
@@ -140,7 +154,133 @@ async function refresh() {
     $('vpn-summary').classList.remove('hidden');
     $('vpn-import-details').open = true;
   }
+  if (ks.ok) $('killswitch').checked = !!ks.data.enabled;
+  if (mm.ok) $('mac-mode').value = mm.data.mode;
+
+  const w = wifiData.apEnabled !== undefined
+    ? { ok: true, data: wifiData }
+    : await api('GET', '/api/wifi/status');
+  if (w.ok) {
+    const d = w.data;
+    const uplink = d.uplinkSsid
+      ? `uplink “${d.uplinkSsid}” ${d.uplinkUp ? `up (${d.uplinkIp || 'no ip'})` : 'down'}`
+      : 'no wireless uplink configured';
+    $('net-summary').textContent = `travel network “${d.apSsid}” · ${uplink}`;
+    if (d.uplinkUp) checkPortal('dash');
+  }
 }
+
+// --- captive portal (§5.1) ---
+
+async function checkPortal(prefix) {
+  const p = await api('GET', '/api/net/portal');
+  const box = $(prefix + '-portal');
+  if (!p.ok || !box) return p;
+  if (p.data.captive) {
+    box.classList.remove('hidden');
+    const link = $(prefix + '-portal-link');
+    // A hijack portal with no redirect URL still triggers on any http page.
+    link.href = p.data.portalUrl || 'http://neverssl.com';
+    // The kill switch blocks exactly the direct traffic a sign-in needs —
+    // §5.1 portal mode. Tell the user instead of failing mysteriously.
+    const ks = await api('GET', '/api/vpn/killswitch');
+    if (ks.ok && ks.data.enabled) {
+      box.querySelector('.warn-text').textContent =
+        'Sign-in required — but the kill switch is blocking it. ' +
+        'Turn the kill switch off, sign in, then turn it back on.';
+    }
+  } else {
+    box.classList.add('hidden');
+  }
+  return p;
+}
+
+// --- first-boot wizard ---
+
+function wizardStep(n) {
+  $('wiz-step').textContent = n;
+  for (const i of [1, 2, 3]) $('wiz-' + i).classList.toggle('hidden', i !== n);
+}
+
+$('wiz-ap-save').addEventListener('click', async () => {
+  const r = await api('POST', '/api/wifi/ap', {
+    ssid: $('wiz-ap-ssid').value.trim(),
+    key: $('wiz-ap-key').value,
+  });
+  if (!r.ok) { alert(r.data.error || 'could not create network'); return; }
+  wizardStep(2);
+});
+
+$('wiz-scan').addEventListener('click', async () => {
+  $('wiz-networks').textContent = 'scanning…';
+  const r = await api('POST', '/api/wifi/scan');
+  if (!r.ok) { $('wiz-networks').textContent = r.data.error || 'scan failed'; return; }
+  const list = document.createElement('div');
+  for (const n of (r.data.networks || []).sort((a, b) => b.signal - a.signal)) {
+    const b = document.createElement('button');
+    b.className = 'ghost net-item';
+    b.textContent = `${n.ssid}  (${n.signal} dBm${n.encryption === 'none' ? ', open' : ''})`;
+    b.addEventListener('click', () => {
+      $('wiz-join-ssid').textContent = n.ssid;
+      $('wiz-join').classList.remove('hidden');
+      $('wiz-join-key').value = '';
+    });
+    list.appendChild(b);
+  }
+  $('wiz-networks').replaceChildren(list);
+});
+
+$('wiz-join-go').addEventListener('click', async () => {
+  const ssid = $('wiz-join-ssid').textContent;
+  const r = await api('POST', '/api/wifi/uplink', { ssid, key: $('wiz-join-key').value });
+  if (!r.ok) { say('wiz-uplink-out', r.data.error || 'join failed'); return; }
+  say('wiz-uplink-out', `joining “${ssid}”…`);
+  for (let i = 0; i < 30; i++) {
+    await new Promise((res) => setTimeout(res, 2000));
+    const s = await api('GET', '/api/wifi/status');
+    if (s.ok && s.data.uplinkUp) {
+      say('wiz-uplink-out', `connected (${s.data.uplinkIp || 'no ip yet'})`);
+      const p = await checkPortal('wiz');
+      if (p.ok && p.data.online) wizardStep(3);
+      return; // if captive, the portal box is showing; recheck advances
+    }
+  }
+  say('wiz-uplink-out', 'still not connected — wrong password, or try again');
+});
+
+$('wiz-portal-recheck').addEventListener('click', async () => {
+  const p = await checkPortal('wiz');
+  if (p.ok && p.data.online) wizardStep(3);
+});
+
+$('wiz-skip-uplink').addEventListener('click', () => wizardStep(3));
+
+$('wiz-vpn-import').addEventListener('click', async () => {
+  const config = $('wiz-vpn-conf').value.trim();
+  if (!config) return;
+  const r = await api('POST', '/api/vpn/import', { config });
+  if (!r.ok) { say('wiz-vpn-out', r.data.error || `import failed (${r.status})`); return; }
+  await refresh();
+});
+
+$('wiz-skip-vpn').addEventListener('click', () => refresh());
+
+// --- dashboard controls ---
+
+$('dash-portal-recheck').addEventListener('click', () => checkPortal('dash'));
+
+$('killswitch').addEventListener('change', async (e) => {
+  const r = await api('POST', '/api/vpn/killswitch', { enabled: e.target.checked });
+  if (!r.ok) {
+    e.target.checked = !e.target.checked;
+    alert('kill switch change failed');
+  }
+});
+
+$('mac-mode').addEventListener('change', async (e) => {
+  const r = await api('POST', '/api/privacy/mac-schedule', { mode: e.target.value });
+  if (!r.ok) alert('could not save MAC schedule');
+});
 
 $('setup-create').addEventListener('click', async () => {
   try {
@@ -227,7 +367,7 @@ $('vpn-import').addEventListener('click', async () => {
 
 $('roll-mac').addEventListener('click', async () => {
   const r = await api('POST', '/api/privacy/roll-mac');
-  $('mac-out').textContent = r.ok ? `${r.data.iface} → ${r.data.mac}` : `error ${r.status}`;
+  $('mac-out').textContent = r.ok ? `uplink MAC → ${r.data.mac}` : (r.data.error || `error ${r.status}`);
 });
 
 refresh();

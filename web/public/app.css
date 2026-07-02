@@ -134,6 +134,33 @@ textarea {
 details { margin-top: var(--space); }
 summary { cursor: pointer; }
 
+h3 { margin: var(--space) 0; font-size: 14px; }
+
+select {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.toggle { align-items: center; font-size: 13px; color: var(--fg-dim); }
+.toggle input { flex: 0 0 auto; accent-color: var(--accent-ok); }
+
+.warn-text { color: var(--accent-warn); font-size: 13px; }
+
+.net-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
 @media (prefers-color-scheme: light) {
   :root {
     --bg:      #f6f8fa;

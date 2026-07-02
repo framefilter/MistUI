@@ -65,8 +65,75 @@
       <pre id="login-out" class="out dim hidden"></pre>
     </section>
 
+    <!-- First-boot wizard: authenticated, but the device isn't set up yet. -->
+    <div id="view-wizard" class="hidden">
+      <section class="card">
+        <h2>Set up — step <span id="wiz-step">1</span> of 3</h2>
+
+        <div id="wiz-1">
+          <h3>Your travel Wi-Fi</h3>
+          <p class="dim">The network your devices will join, wherever you
+          are. This also switches the radio on.</p>
+          <div class="row"><input id="wiz-ap-ssid" placeholder="network name" maxlength="32" /></div>
+          <div class="row"><input id="wiz-ap-key" type="password" placeholder="password (8–63 chars)" /></div>
+          <div class="row"><button id="wiz-ap-save">Create network</button></div>
+        </div>
+
+        <div id="wiz-2" class="hidden">
+          <h3>Connect to the internet</h3>
+          <p class="dim">Join the hotel / upstream Wi-Fi. Your travel network
+          rides on top of it.</p>
+          <div class="row">
+            <button id="wiz-scan">Scan for networks</button>
+            <button id="wiz-skip-uplink" class="ghost">Skip (wired / later)</button>
+          </div>
+          <div id="wiz-networks"></div>
+          <div id="wiz-join" class="hidden">
+            <p class="dim small">Joining <strong id="wiz-join-ssid"></strong></p>
+            <div class="row">
+              <input id="wiz-join-key" type="password" placeholder="password (empty if open network)" />
+              <button id="wiz-join-go">Join</button>
+            </div>
+          </div>
+          <pre id="wiz-uplink-out" class="out dim hidden"></pre>
+          <div id="wiz-portal" class="hidden">
+            <p class="warn-text">This network requires a sign-in. Your
+            traffic is unprotected until it's done.</p>
+            <div class="row">
+              <a id="wiz-portal-link" href="#" target="_blank" rel="noopener"><button>Open sign-in page</button></a>
+              <button id="wiz-portal-recheck" class="ghost">I signed in — re-check</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="wiz-3" class="hidden">
+          <h3>VPN</h3>
+          <p class="dim">Paste the WireGuard <code>.conf</code> from your VPN
+          provider. You can also do this later from the dashboard.</p>
+          <textarea id="wiz-vpn-conf" rows="7" spellcheck="false"></textarea>
+          <div class="row">
+            <button id="wiz-vpn-import">Import &amp; finish</button>
+            <button id="wiz-skip-vpn" class="ghost">Skip for now</button>
+          </div>
+          <pre id="wiz-vpn-out" class="out dim hidden"></pre>
+        </div>
+      </section>
+    </div>
+
     <!-- Authenticated. -->
     <div id="view-dash" class="hidden">
+      <section class="card">
+        <h2>Network</h2>
+        <p id="net-summary" class="dim small">—</p>
+        <div id="dash-portal" class="hidden">
+          <p class="warn-text">Sign-in required on the current network —
+          traffic is unprotected until it's done.</p>
+          <div class="row">
+            <a id="dash-portal-link" href="#" target="_blank" rel="noopener"><button>Open sign-in page</button></a>
+            <button id="dash-portal-recheck" class="ghost">Re-check</button>
+          </div>
+        </div>
+      </section>
       <section class="card">
         <h2>VPN</h2>
         <p class="dim">WireGuard tunnel control.</p>
@@ -75,6 +142,10 @@
           <button id="vpn-up">Connect</button>
           <button id="vpn-down" class="ghost">Disconnect</button>
         </div>
+        <label class="row toggle">
+          <input type="checkbox" id="killswitch" />
+          <span>Kill switch — without the tunnel, no traffic leaves at all</span>
+        </label>
         <pre id="vpn-status" class="out dim">—</pre>
         <details id="vpn-import-details">
           <summary class="dim small">Import WireGuard configuration</summary>
@@ -92,9 +163,15 @@
 
       <section class="card">
         <h2>Privacy</h2>
-        <p class="dim">Randomize the Wi-Fi MAC address.</p>
+        <p class="dim">The MAC address is the identity hotel networks see.
+        Rolling it drops the current connection (and any portal sign-in).</p>
         <div class="row">
-          <button id="roll-mac" class="ghost">Roll MAC now</button>
+          <select id="mac-mode">
+            <option value="on-join">New MAC for every network (recommended)</option>
+            <option value="daily">New MAC daily</option>
+            <option value="off">Keep device MAC</option>
+          </select>
+          <button id="roll-mac" class="ghost">Roll now</button>
         </div>
         <pre id="mac-out" class="out dim">—</pre>
       </section>

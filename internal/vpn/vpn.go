@@ -7,46 +7,33 @@ package vpn
 import (
 	"context"
 	"fmt"
-	"os/exec"
-	"strings"
+
+	"github.com/framefilter/mistui/internal/run"
 )
 
 // Iface is the managed UCI interface (and kernel device) name. The peer
 // section type wireguard_<iface> is derived from it, per netifd convention.
 const Iface = "wg0"
 
-// Connector imports a WireGuard config and brings the tunnel up or down.
+// Connector imports a WireGuard config, brings the tunnel up or down, and
+// controls the kill switch.
 type Connector interface {
 	Import(ctx context.Context, cfg *Config) error
 	Up(ctx context.Context, iface string) error
 	Down(ctx context.Context, iface string) error
 	Status(ctx context.Context) (string, error)
-}
-
-// Runner executes an external command — injectable so tests can record
-// the exact UCI writes instead of mutating a router.
-type Runner interface {
-	Run(ctx context.Context, name string, args ...string) (string, error)
-}
-
-type execRunner struct{}
-
-func (execRunner) Run(ctx context.Context, name string, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%s %s: %v: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
-	}
-	return strings.TrimSpace(string(out)), nil
+	SetKillSwitch(ctx context.Context, enabled bool) error
+	KillSwitch(ctx context.Context) (bool, error)
 }
 
 // UCIConnector is the router implementation.
-type UCIConnector struct{ run Runner }
+type UCIConnector struct{ run run.Runner }
 
 // NewUCIConnector returns the production connector.
-func NewUCIConnector() UCIConnector { return UCIConnector{run: execRunner{}} }
+func NewUCIConnector() UCIConnector { return UCIConnector{run: run.Exec{}} }
 
 // NewUCIConnectorWithRunner is the test seam.
-func NewUCIConnectorWithRunner(r Runner) UCIConnector { return UCIConnector{run: r} }
+func NewUCIConnectorWithRunner(r run.Runner) UCIConnector { return UCIConnector{run: r} }
 
 // Import replaces the wg0 UCI config with cfg and registers the interface
 // with netifd (auto=0: the tunnel comes up only when the user connects).
@@ -100,13 +87,24 @@ func (c UCIConnector) Import(ctx context.Context, cfg *Config) error {
 
 	cmds = append(cmds,
 		[]string{"uci", "commit", "network"},
-		// Attach wg0 to the wan firewall zone (found by name, not index)
-		// so LAN→tunnel forwarding + masquerade apply.
+		// wg0 lives in its own 'vpn' zone (masq + mtu_fix) with a standing
+		// lan→vpn forwarding. The kill switch then has exactly one lever:
+		// the lan→wan forwarding (see SetKillSwitch) — tunnel traffic is
+		// always allowed, direct WAN is what gets revoked.
 		[]string{"sh", "-c", fmt.Sprintf(
-			`zone=$(uci show firewall | sed -n "s/^firewall\.\(@zone\[[0-9]*\]\)\.name='wan'$/\1/p" | head -1); `+
-				`[ -n "$zone" ] || exit 1; `+
-				`uci -q get firewall.$zone.network | grep -qw %s || uci add_list firewall.$zone.network=%s; `+
-				`uci commit firewall`, Iface, Iface)},
+			`uci show firewall | grep -q "\.name='vpn'" || { `+
+				`uci add firewall zone >/dev/null; `+
+				`uci set firewall.@zone[-1].name=vpn; `+
+				`uci add_list firewall.@zone[-1].network=%s; `+
+				`uci set firewall.@zone[-1].input=REJECT; `+
+				`uci set firewall.@zone[-1].output=ACCEPT; `+
+				`uci set firewall.@zone[-1].forward=REJECT; `+
+				`uci set firewall.@zone[-1].masq=1; `+
+				`uci set firewall.@zone[-1].mtu_fix=1; `+
+				`uci add firewall forwarding >/dev/null; `+
+				`uci set firewall.@forwarding[-1].src=lan; `+
+				`uci set firewall.@forwarding[-1].dest=vpn; `+
+				`uci commit firewall; }`, Iface)},
 		// Let netifd learn the interface; auto=0 keeps it down until Up().
 		[]string{"/etc/init.d/network", "reload"},
 	)

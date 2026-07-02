@@ -13,6 +13,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"log/slog"
 	"net"
@@ -22,6 +23,7 @@ import (
 
 	"github.com/framefilter/mistui/internal/certgen"
 	"github.com/framefilter/mistui/internal/httpapi"
+	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
 	"github.com/framefilter/mistui/web"
@@ -52,8 +54,13 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	srv := httpapi.New(st, vpn.NewUCIConnector(), *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
+	srv := httpapi.New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
 	handler := srv.Handler(web.FS(), material.CAPath)
+
+	// Daily MAC rotation, when the user has chosen that mode.
+	schedCtx, schedCancel := context.WithCancel(context.Background())
+	defer schedCancel()
+	go srv.RunMACSchedule(schedCtx)
 
 	errs := make(chan error, 2)
 	n := 0

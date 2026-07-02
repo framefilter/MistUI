@@ -49,27 +49,7 @@ func TestLiveEndToEnd(t *testing.T) {
 		origin = base
 	}
 
-	// Bootstrap trust from the device's own CA, like a first-boot user.
-	transport := http.DefaultTransport
-	if strings.HasPrefix(base, "https://") {
-		insecure := &http.Client{Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-		}}
-		res, err := insecure.Get(base + "/ca.pem")
-		if err != nil {
-			t.Fatalf("fetch /ca.pem: %v", err)
-		}
-		pemBytes, err := io.ReadAll(res.Body)
-		res.Body.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemBytes) {
-			t.Fatal("bad CA PEM from /ca.pem")
-		}
-		transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
-	}
+	transport := e2eTransport(t, base)
 
 	jar, _ := cookiejar.New(nil)
 	owner := &http.Client{Jar: jar, Transport: transport}
@@ -158,4 +138,30 @@ PersistentKeepalive = 25
 func jsonDecode(res *http.Response, v any) error {
 	defer res.Body.Close()
 	return json.NewDecoder(res.Body).Decode(v)
+}
+
+// e2eTransport bootstraps trust from the device's own CA, like a
+// first-boot user installing /ca.pem.
+func e2eTransport(t *testing.T, base string) http.RoundTripper {
+	t.Helper()
+	if !strings.HasPrefix(base, "https://") {
+		return http.DefaultTransport
+	}
+	insecure := &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}}
+	res, err := insecure.Get(base + "/ca.pem")
+	if err != nil {
+		t.Fatalf("fetch /ca.pem: %v", err)
+	}
+	pemBytes, err := io.ReadAll(res.Body)
+	res.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pemBytes) {
+		t.Fatal("bad CA PEM from /ca.pem")
+	}
+	return &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}
 }

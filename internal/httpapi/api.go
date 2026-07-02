@@ -22,8 +22,8 @@ const sessionCookie = "mistui_session"
 type Server struct {
 	store   *store.Store
 	vpn     vpn.Connector
+	wifi    netcfg.WiFi
 	wgIface string
-	apnIf   string // wireless interface MAC rolling targets
 	rpID    string // WebAuthn RP ID — the hostname users reach us at
 	origins []string
 	chals   *challenges
@@ -33,9 +33,9 @@ type Server struct {
 // New builds a Server with sane defaults for the reference hardware. rpID
 // is the WebAuthn relying-party ID (a DNS name, never an IP); origins are
 // the exact browser origins allowed to run ceremonies.
-func New(st *store.Store, conn vpn.Connector, rpID string, origins []string) *Server {
+func New(st *store.Store, conn vpn.Connector, wifi netcfg.WiFi, rpID string, origins []string) *Server {
 	s := &Server{
-		store: st, vpn: conn, wgIface: "wg0", apnIf: "phy0-ap0",
+		store: st, vpn: conn, wifi: wifi, wgIface: vpn.Iface,
 		rpID: rpID, origins: origins, chals: newChallenges(),
 	}
 	s.routes()
@@ -57,6 +57,15 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/vpn/up", s.requireSession(s.vpnUp))
 	m.HandleFunc("POST /api/vpn/down", s.requireSession(s.vpnDown))
 	m.HandleFunc("GET /api/vpn/status", s.requireSession(s.vpnStatus))
+	m.HandleFunc("GET /api/vpn/killswitch", s.requireSession(s.killSwitchGet))
+	m.HandleFunc("POST /api/vpn/killswitch", s.requireSession(s.killSwitchSet))
+	m.HandleFunc("GET /api/wifi/status", s.requireSession(s.wifiStatus))
+	m.HandleFunc("POST /api/wifi/scan", s.requireSession(s.wifiScan))
+	m.HandleFunc("POST /api/wifi/ap", s.requireSession(s.wifiSetAP))
+	m.HandleFunc("POST /api/wifi/uplink", s.requireSession(s.wifiJoinUplink))
+	m.HandleFunc("GET /api/net/portal", s.requireSession(s.netPortal))
+	m.HandleFunc("GET /api/privacy/mac-schedule", s.requireSession(s.macScheduleGet))
+	m.HandleFunc("POST /api/privacy/mac-schedule", s.requireSession(s.macScheduleSet))
 	m.HandleFunc("POST /api/privacy/roll-mac", s.requireSession(s.rollMAC))
 	s.api = m
 }
@@ -194,16 +203,4 @@ func (s *Server) vpnStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"up": out != "", "detail": out})
-}
-
-func (s *Server) rollMAC(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-	mac, err := netcfg.RollMAC(ctx, s.apnIf)
-	if err != nil {
-		slog.Error("roll mac", "iface", s.apnIf, "err", err)
-		http.Error(w, "roll failed", http.StatusBadGateway)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"iface": s.apnIf, "mac": mac})
 }
