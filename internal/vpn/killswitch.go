@@ -5,10 +5,13 @@
 // restores it. State therefore lives in the firewall config itself —
 // nothing extra to persist, and it survives reboots by construction.
 //
-// Honest limitation (documented in the UI): this governs *forwarded*
-// client traffic. Router-originated traffic (e.g. dnsmasq's upstream
-// queries while the tunnel is down) is OUTPUT, not FORWARD — closing that
-// leak is the encrypted-DNS work (§5 item 5), not the kill switch's job.
+// Scope: this governs *forwarded* client traffic. Router-originated
+// traffic (e.g. dnsmasq's upstream queries while the tunnel is down) is
+// OUTPUT, not FORWARD — that leak is closed by encrypted DNS
+// (internal/dns): plaintext port 53 is rejected on the wan zone outright,
+// and while this switch is on a companion rule (mistui_dns_ks, installed
+// by the killswitch handler) rejects DoH on the raw wan too. If the user
+// turns encrypted DNS off, the OUTPUT leak returns and the UI says so.
 package vpn
 
 import "context"

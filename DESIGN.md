@@ -130,7 +130,13 @@ missing is something the user simply *cannot* configure (no LuCI fallback).
    so AP+STA share the band (§2). Includes captive-portal handling (§5.1) —
    hotel networks are the primary use case, and most of them gate access.
 4. **WireGuard** — import a config, connect/disconnect, kill switch.
-5. **DNS** — encrypted DNS (DoH/DoT) default.
+5. **DNS** — encrypted DNS (DoH) on by default: dnsmasq forwards every
+   lookup — LAN clients' and the router's own — to a DoH client embedded in
+   `mistd` (curated resolvers, Quad9 default; endpoints IP-pinned so there
+   is no plaintext bootstrap query). The firewall rejects plaintext port 53
+   toward the WAN (OUTPUT and FORWARD), DNATs hardcoded client DNS into the
+   encrypted path, and — while the kill switch is on — rejects DoH on the
+   raw WAN too, so "tunnel or nothing" includes name lookups.
 6. **MAC privacy** — roll the uplink identity the hotel network sees. Not
    just the MAC: a bare locally-administered random MAC advertises itself
    as spoofed (the LA bit) and pairs oddly with the router's hostname. So
@@ -190,6 +196,20 @@ while one is authorized.
   guided-sign-in half of §5.1; automatic kill-switch relaxing during
   portal mode is deferred — the UI instead tells the user to toggle it,
   which is honest and one line. Live-verified via TestLiveM2Network.
+- **M2.5 — encrypted DNS. ✅** The §5-item-5 stack, with no new packages:
+  a DoH forwarder inside `mistd` (127.0.0.1#5335), dnsmasq `noresolv` +
+  forward, and port-53 REJECTs on the wan zone — closing the kill switch's
+  documented router-originated DNS leak (OUTPUT, which its FORWARD lever
+  never governed). A LAN redirect hijacks hardcoded client DNS into the
+  encrypted path. The fail-closed rule rides the kill switch and is
+  tunnel-aware for free: fw4 classifies OUTPUT by egress zone, so DoH rides
+  wg0 when the tunnel is up and is rejected on the raw wan when it is down
+  (warm upstream connections are cut when the rule lands — established
+  flows bypass fw4 rules). Hostname VPN endpoints are resolved over DoH and
+  pinned at import time, so fail-closed DNS can never strand `ifup`. On by
+  default from the wizard's AP step; switching it off is honest about the
+  leak returning. Live-verified via TestLiveDNS (uncached-name oracle
+  against the router's own resolver).
 - **M3 — images.** Ready-to-flash factory/sysupgrade images for a small,
   curated set of supported models, composed via the Image Builder with
   LuCI/uhttpd left out (see §8); the per-arch `.apk`/`.ipk` is the build

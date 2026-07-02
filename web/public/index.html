@@ -167,6 +167,26 @@
       </section>
 
       <section class="card">
+        <h2>DNS</h2>
+        <p class="dim">Every website visit starts with a name lookup, and
+        plain DNS shows those names to the hotel network. Encrypted DNS
+        (DNS-over-HTTPS) hides them — for the router and every device
+        behind it, even ones with their own hardcoded DNS servers.</p>
+        <label class="row toggle">
+          <input type="checkbox" id="dns-toggle" />
+          <span>Encrypted DNS — lookups leave only over HTTPS</span>
+        </label>
+        <label class="field">
+          <span class="dim small">Resolver</span>
+          <select id="dns-provider"></select>
+        </label>
+        <p id="dns-warning" class="warn-text small hidden">Encrypted DNS is
+        off: the router's own lookups go out in plain text — around the VPN
+        and the kill switch — until the tunnel is up.</p>
+        <pre id="dns-status" class="out dim">—</pre>
+      </section>
+
+      <section class="card">
         <h2>Privacy</h2>
         <p class="dim">The MAC address and hostname are the identity hotel
         networks see. Rolling drops the current connection (and any portal

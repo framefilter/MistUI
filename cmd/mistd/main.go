@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/framefilter/mistui/internal/certgen"
+	"github.com/framefilter/mistui/internal/dns"
 	"github.com/framefilter/mistui/internal/httpapi"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
@@ -36,6 +37,7 @@ func main() {
 	dbPath := flag.String("db", "/etc/mistui/mistui.db", "bbolt database path")
 	rpID := flag.String("rp", "mist.lan", "WebAuthn RP ID: the DNS name users reach the UI at")
 	origins := flag.String("origins", "", "comma-separated allowed origins (default https://<rp>[:port from -tls-addr])")
+	dnsListen := flag.String("dns-listen", dns.ListenAddr, "DoH forwarder stub-DNS listen address (dnsmasq forwards here)")
 	flag.Parse()
 
 	st, err := store.Open(*dbPath)
@@ -54,13 +56,25 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	srv := httpapi.New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
+	// The DoH forwarder always runs (loopback only); "encrypted DNS on/off"
+	// is whether dnsmasq and the firewall point at it. A bind failure is
+	// not fatal — the daemon must stay reachable to show the problem.
+	fwd := dns.NewForwarder(*dnsListen)
+	dnsSvc := dns.NewService(fwd)
+	srv := httpapi.New(st, vpn.NewUCIConnector(), netcfg.NewWiFi(), dnsSvc, *rpID, allowedOrigins(*origins, *rpID, *tlsAddr, *addr))
 	handler := srv.Handler(web.FS(), material.CAPath)
 
 	// Daily MAC rotation, when the user has chosen that mode.
 	schedCtx, schedCancel := context.WithCancel(context.Background())
 	defer schedCancel()
 	go srv.RunMACSchedule(schedCtx)
+
+	if err := fwd.Listen(); err != nil {
+		slog.Error("doh forwarder bind failed — encrypted DNS will not resolve", "addr", *dnsListen, "err", err)
+	} else {
+		slog.Info("doh forwarder listening", "addr", fwd.Addr(), "provider", fwd.ProviderKey())
+		go fwd.Serve(schedCtx)
+	}
 
 	errs := make(chan error, 2)
 	n := 0

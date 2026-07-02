@@ -76,6 +76,9 @@ func (s *Server) wifiSetAP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{"error": err.Error()})
 		return
 	}
+	// The wizard's one mandatory step doubles as the provisioning moment
+	// for the encrypted-DNS default (§5 item 5).
+	s.applyDNSDefault(ctx)
 	writeJSON(w, http.StatusOK, map[string]any{"apSsid": req.SSID})
 }
 
@@ -142,6 +145,15 @@ func (s *Server) killSwitchSet(w http.ResponseWriter, r *http.Request) {
 		slog.Error("kill switch", "enabled", req.Enabled, "err", err)
 		http.Error(w, "kill switch change failed", http.StatusBadGateway)
 		return
+	}
+	// Fail-closed DNS rides the kill switch: while it is on, DoH may not
+	// use the raw WAN either — tunnel or nothing includes name lookups.
+	if dnsOn, err := s.dns.Enabled(ctx); err == nil && dnsOn {
+		if err := s.dns.SetFailClosed(ctx, req.Enabled); err != nil {
+			slog.Error("dns fail-closed", "enabled", req.Enabled, "err", err)
+			http.Error(w, "kill switch changed, but the DNS fail-closed rule failed", http.StatusBadGateway)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": req.Enabled})
 }

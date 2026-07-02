@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/framefilter/mistui/internal/dns"
 	"github.com/framefilter/mistui/internal/netcfg"
 	"github.com/framefilter/mistui/internal/store"
 	"github.com/framefilter/mistui/internal/vpn"
@@ -23,6 +24,7 @@ type Server struct {
 	store   *store.Store
 	vpn     vpn.Connector
 	wifi    netcfg.WiFi
+	dns     *dns.Service
 	wgIface string
 	rpID    string // WebAuthn RP ID — the hostname users reach us at
 	origins []string
@@ -33,10 +35,14 @@ type Server struct {
 // New builds a Server with sane defaults for the reference hardware. rpID
 // is the WebAuthn relying-party ID (a DNS name, never an IP); origins are
 // the exact browser origins allowed to run ceremonies.
-func New(st *store.Store, conn vpn.Connector, wifi netcfg.WiFi, rpID string, origins []string) *Server {
+func New(st *store.Store, conn vpn.Connector, wifi netcfg.WiFi, dnsSvc *dns.Service, rpID string, origins []string) *Server {
 	s := &Server{
-		store: st, vpn: conn, wifi: wifi, wgIface: vpn.Iface,
+		store: st, vpn: conn, wifi: wifi, dns: dnsSvc, wgIface: vpn.Iface,
 		rpID: rpID, origins: origins, chals: newChallenges(),
+	}
+	// The forwarder starts on the built-in default; restore the user's pick.
+	if v, _ := st.Config(dnsProviderKey); len(v) > 0 {
+		_ = s.dns.Fwd.SetProvider(string(v))
 	}
 	s.routes()
 	return s
@@ -65,6 +71,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/wifi/ap", s.requireSession(s.wifiSetAP))
 	m.HandleFunc("POST /api/wifi/uplink", s.requireSession(s.wifiJoinUplink))
 	m.HandleFunc("GET /api/net/portal", s.requireSession(s.netPortal))
+	m.HandleFunc("GET /api/dns", s.requireSession(s.dnsGet))
+	m.HandleFunc("POST /api/dns", s.requireSession(s.dnsSet))
+	m.HandleFunc("POST /api/dns/provider", s.requireSession(s.dnsProviderSet))
 	m.HandleFunc("GET /api/privacy/mac-schedule", s.requireSession(s.macScheduleGet))
 	m.HandleFunc("POST /api/privacy/mac-schedule", s.requireSession(s.macScheduleSet))
 	m.HandleFunc("GET /api/privacy/mac-profile", s.requireSession(s.macProfileGet))
@@ -146,12 +155,16 @@ func (s *Server) vpnImport(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	// Summary first (users should see the hostname they pasted), then pin
+	// hostname endpoints to IPs so fail-closed DNS can't strand ifup.
+	sum := cfg.Summary()
+	s.pinEndpoints(ctx, cfg)
 	if err := s.vpn.Import(ctx, cfg); err != nil {
 		slog.Error("vpn import", "err", err)
 		http.Error(w, "import failed", http.StatusBadGateway)
 		return
 	}
-	summary, err := json.Marshal(cfg.Summary())
+	summary, err := json.Marshal(sum)
 	if err == nil {
 		err = s.store.PutConfig(vpnSummaryKey, summary)
 	}
@@ -159,7 +172,7 @@ func (s *Server) vpnImport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal", http.StatusInternalServerError)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"imported": true, "summary": cfg.Summary()})
+	writeJSON(w, http.StatusOK, map[string]any{"imported": true, "summary": sum})
 }
 
 func (s *Server) vpnConfig(w http.ResponseWriter, r *http.Request) {

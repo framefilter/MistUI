@@ -155,12 +155,13 @@ async function refresh() {
 }
 
 async function refreshDash(wifiData) {
-  const [v, c, ks, mm, mp] = await Promise.all([
+  const [v, c, ks, mm, mp, dn] = await Promise.all([
     api('GET', '/api/vpn/status'),
     api('GET', '/api/vpn/config'),
     api('GET', '/api/vpn/killswitch'),
     api('GET', '/api/privacy/mac-schedule'),
     api('GET', '/api/privacy/mac-profile'),
+    api('GET', '/api/dns'),
   ]);
   $('vpn-status').textContent = v.ok
     ? (v.data.up ? (v.data.detail || 'connected') : 'disconnected')
@@ -177,6 +178,7 @@ async function refreshDash(wifiData) {
     $('vpn-summary').classList.remove('hidden');
   }
   if (ks.ok) $('killswitch').checked = !!ks.data.enabled;
+  if (dn.ok) renderDNS(dn.data);
   if (mm.ok) $('mac-mode').value = mm.data.mode;
   if (mp.ok) {
     const sel = $('mac-profile');
@@ -202,6 +204,47 @@ async function refreshDash(wifiData) {
   }
 }
 
+// --- encrypted DNS (§5 item 5) ---
+
+function renderDNS(d) {
+  $('dns-toggle').checked = !!d.enabled;
+  $('dns-warning').classList.toggle('hidden', !!d.enabled);
+  const sel = $('dns-provider');
+  sel.replaceChildren(...(d.providers || []).map((p) => {
+    const o = document.createElement('option');
+    o.value = p.key;
+    o.textContent = p.label;
+    return o;
+  }));
+  sel.value = d.provider;
+  const st = d.stats || {};
+  $('dns-status').textContent = !d.enabled
+    ? 'off — devices use whatever DNS the current network hands out'
+    : st.queries
+      ? `${st.queries} lookups encrypted` +
+        (st.failures ? `, ${st.failures} failed (last: ${st.lastError || 'unknown'})` : '')
+      : 'on — no lookups yet';
+}
+
+async function refreshDNS() {
+  const r = await api('GET', '/api/dns');
+  if (r.ok) renderDNS(r.data);
+}
+
+$('dns-toggle').addEventListener('change', async (e) => {
+  const r = await api('POST', '/api/dns', { enabled: e.target.checked });
+  if (!r.ok) {
+    e.target.checked = !e.target.checked;
+    alert(r.data.raw || 'encrypted DNS change failed');
+  }
+  await refreshDNS();
+});
+
+$('dns-provider').addEventListener('change', async (e) => {
+  const r = await api('POST', '/api/dns/provider', { provider: e.target.value });
+  if (!r.ok) alert('could not switch DNS resolver');
+});
+
 // --- captive portal (§5.1) ---
 
 async function checkPortal(prefix) {
@@ -213,13 +256,27 @@ async function checkPortal(prefix) {
     const link = $(prefix + '-portal-link');
     // A hijack portal with no redirect URL still triggers on any http page.
     link.href = p.data.portalUrl || 'http://neverssl.com';
-    // The kill switch blocks exactly the direct traffic a sign-in needs —
-    // §5.1 portal mode. Tell the user instead of failing mysteriously.
-    const ks = await api('GET', '/api/vpn/killswitch');
+    // The kill switch blocks exactly the direct traffic a sign-in needs,
+    // and portals announce themselves by hijacking plaintext DNS — §5.1
+    // portal mode. Tell the user instead of failing mysteriously.
+    const [ks, dn] = await Promise.all([
+      api('GET', '/api/vpn/killswitch'),
+      api('GET', '/api/dns'),
+    ]);
     if (ks.ok && ks.data.enabled) {
       box.querySelector('.warn-text').textContent =
         'Sign-in required — but the kill switch is blocking it. ' +
-        'Turn the kill switch off, sign in, then turn it back on.';
+        'Turn the kill switch off' +
+        (dn.ok && dn.data.enabled ? ' (and encrypted DNS, if the sign-in page won’t load)' : '') +
+        ', sign in, then turn it back on.';
+    } else if (dn.ok && dn.data.enabled) {
+      box.querySelector('.warn-text').textContent =
+        'Sign-in required. If the sign-in page won’t load, temporarily ' +
+        'turn off encrypted DNS, sign in, then turn it back on.';
+    } else {
+      box.querySelector('.warn-text').textContent =
+        'This network requires a sign-in. Your traffic is unprotected ' +
+        'until it’s done.';
     }
   } else {
     box.classList.add('hidden');
