@@ -1,32 +1,44 @@
 # Investigation — Cloudflare WARP as a VPN alternative
 
 **Status:** investigation only. Nothing is implemented; no decision is made.
-**Question:** can WARP stand in for "bring your own WireGuard provider"
-(DESIGN §5 item 4), so that a user without a VPN subscription still gets a
-tunnel?
+Permission to test is being sought from Cloudflare (§6.1).
+
+**Goal.** A **temporary fallback** — a switch the user can flip when their
+own VPN is being blocked by the network they're on, engaging after the
+captive-portal machinery (DESIGN §5.1) has done its work. Not a VPN replacement,
+and not the primary tunnel for anybody who has one.
 
 ## 1. Summary
 
-**WARP is not a substitute for a VPN. It is a substitute for _no_ VPN** —
-and that is the interesting part, because right now the wizard's third step
-offers exactly two outcomes: paste a wg-quick config, or press *Skip*. Every
-user without a VPN subscription takes the second door and ends up on hotel
-Wi-Fi with no tunnel at all. WARP closes that gap for free, with no account,
-no payment, and nothing to paste.
+The fallback framing is the right one, and it is a much better fit than
+"free VPN for people who don't have one" — it is bounded, user-initiated,
+obviously temporary, and it slots into an existing gap in the portal state
+machine rather than competing with the paste-a-config path. It is also an
+easier thing to ask Cloudflare for.
 
-What it does **not** do is replace a real VPN for anyone who has one: WARP
-egresses from a Cloudflare IP deliberately geolocated near you, so it hides
-you from the local network and from your ISP, but not from Cloudflare, and it
-will not make you look like you are at home. Framing it as "the VPN option"
-would be dishonest; framing it as "protection when you don't have one" is
-accurate.
+Two findings shape it:
 
-Technically it is close to free to adopt (see §4): a WARP profile already
-imports today, unmodified, and one-click enrollment needs no new
-dependencies. The blocker is **not** engineering. It is §5.1 — whether
-Cloudflare's terms permit a third-party product to register free WARP
-accounts on a user's behalf. That has to be answered before any of this
-ships.
+**It slots in cleanly, and the slot already needs filling.** `exitPortalMode`
+brings the tunnel up on clear (§5.1 step 3) but never checks that it
+*handshakes* — and `/api/vpn/status` reports "up" whenever `wg show` prints
+anything, which it does as soon as the interface exists. So a user whose
+WireGuard is blocked by the hotel today gets: interface up, UI saying
+"connected", kill switch restored, and no internet. Detecting that is
+the fallback's trigger, and it is worth fixing regardless of WARP (§5.1).
+
+**But WARP-over-WireGuard survives only some of the blocking it is meant to
+answer.** It is the same protocol on a UDP port. It gets past
+port-blocklists and commercial-VPN IP blocklists; it does not get past
+"all UDP except 53" or WireGuard protocol fingerprinting (§5.3). The irony
+worth carrying into the Cloudflare conversation: Cloudflare moved its own
+client to MASQUE *precisely because* networks block WireGuard, so the path
+available here is Cloudflare's weakest one against exactly this problem.
+The mitigation — probing WARP's alternate UDP ports rather than only 2408 —
+stops being a nice-to-have and becomes the feature (§5.4).
+
+Engineering cost stays small (§4): a WARP profile already imports today
+unmodified, and enrolment needs no new dependencies. The blocker remains
+§6.1, the terms.
 
 ## 2. What WARP actually is
 
@@ -122,8 +134,8 @@ A new `internal/vpn/warp.go`:
    existing `Import`.
 
 Everything downstream — UCI, the `vpn` firewall zone, the kill switch, portal
-mode — is reused unchanged. UI is one button in wizard step 3 and one on the
-dashboard VPN card, next to the existing paste box, never replacing it.
+mode — is reused unchanged. Where the switch surfaces, and on what interface,
+is §5; enrolment itself is the same code either way.
 
 Three integration details that are easy to get wrong:
 
@@ -149,9 +161,117 @@ throws away the kernel WireGuard datapath for a userspace one on a
 MediaTek MT7628. Out of budget. If Cloudflare ever retires the WireGuard
 path, the answer is to drop the feature, not to chase it.
 
-## 5. Risks
+## 5. As a fallback: the design
 
-### 5.1 Terms of service — the blocker
+### 5.1 The trigger, and a bug it exposes
+
+Portal mode already ends in the right place. `exitPortalMode` restores the
+saved posture and, when a VPN is configured, calls `vpn.Up` — DESIGN §5.1
+step 3. What it does not do is confirm the tunnel came *alive*: `ifup`
+succeeding means netifd accepted the interface, not that a handshake
+completed. `/api/vpn/status` has the same weakness — it reports `up` when
+`wg show` produces any output at all, and `wg show` prints as soon as the
+interface exists, peers or no peers.
+
+The consequence on a network that blocks WireGuard, today, with no WARP
+involved:
+
+1. Portal clears, `exitPortalMode` runs.
+2. `ifup wg0` succeeds. No handshake ever completes.
+3. Kill switch restored — LAN traffic may only use the tunnel.
+4. The tunnel is a black hole. **No internet**, and the UI says
+   "connected" and "protections restored."
+
+That is the honesty rule in the portal-mode header comment being broken by
+a liveness check that isn't there. It should be fixed on its own merits:
+`wg show <iface> latest-handshakes` gives a per-peer unix timestamp, `0`
+meaning never, so "handshaked within the last N seconds" is a one-command
+check. `/api/vpn/status` should distinguish *up* from *carrying traffic*,
+and `exitPortalMode` should wait briefly for a handshake before declaring
+victory.
+
+Fix that, and the fallback trigger is free: **no handshake within the
+timeout ⇒ this network is blocking your VPN ⇒ offer the switch.** No new
+detection machinery, and the offer appears at the exact moment the user is
+staring at a dead connection.
+
+Whether the switch auto-flips or only gets offered is a real product
+choice. Offering it is the more honest default — silently rerouting a
+privacy-conscious user's traffic to a company they didn't choose is the
+kind of surprise this project avoids elsewhere.
+
+### 5.2 Keeping "temporary" true
+
+Three properties, none of which come for free:
+
+- **Use a separate interface.** The fallback must not overwrite the user's
+  imported `wg0` UCI config — that would make a "temporary" switch
+  destructive. Put WARP on `wg1`, add it to the existing `vpn` firewall
+  zone, and the swap is `ifdown wg0` / `ifup wg1`. The kill switch never
+  has to open, because the zone (not the interface) is what `lan→vpn`
+  forwards to, so there is no window where traffic can take the raw WAN.
+- **Revert automatically.** Keep probing the real tunnel on a slow cadence;
+  when it handshakes, switch back and say so. A fallback that quietly
+  becomes permanent is the failure mode — a user who flips it in one hotel
+  should not still be on Cloudflare a month later.
+- **Say which tunnel is carrying traffic, always.** The dashboard VPN card
+  currently has one state. With a fallback it needs two, visibly distinct:
+  *"Fallback: Cloudflare WARP — your VPN is blocked on this network"* is
+  not the same claim as *"Connected."*
+
+The kill switch stays **on** throughout. The fallback is a different
+tunnel, not an absence of one, so the "tunnel or nothing" guarantee holds
+across the swap — which is most of why this is a defensible feature at all.
+
+### 5.3 What the fallback actually rescues
+
+The blocking mode determines whether WARP-over-WireGuard helps, and the
+answer is genuinely mixed:
+
+| How the network blocks you | Does WARP help? |
+|---|---|
+| Blocks known VPN ports (51820 etc.), UDP otherwise fine | ✅ different port |
+| Blocklists commercial VPN provider IP ranges | ✅ probably — Cloudflare anycast |
+| Your provider is down or blocked regionally | ✅ |
+| Blocks all UDP except DNS | ❌ same transport |
+| DPI fingerprints the WireGuard handshake | ❌ same protocol |
+
+So it rescues the lazy and commercial cases, which are the common ones, and
+fails the deliberate anti-VPN cases, which are the ones a user is most
+likely to be angry about. The UI has to be honest when the fallback also
+fails to handshake: *"Cloudflare WARP is blocked here too — this network is
+blocking VPNs, not just yours."* That is a genuinely useful thing to be
+told, and it costs nothing, since the same liveness check from §5.1 detects
+it.
+
+### 5.4 Port probing is now the feature
+
+If the reason for falling back is "blocked," trying only UDP 2408 is close
+to pointless — it is a well-known WARP port and a network blocking VPNs
+plausibly has it. WARP's anycast endpoints answer on a large pool of
+alternate UDP ports (500, 1701, 4500 and dozens of others), and cycling
+through a handful of them is what converts the first row of the §5.3 table
+from "maybe" to "usually."
+
+This is the one piece of real engineering the fallback needs beyond
+enrolment: try an endpoint, wait for a handshake, move to the next port,
+give up after a bounded number of attempts. It is also the piece a pasted
+profile cannot do for itself, and therefore the strongest argument for
+building option B rather than staying with option A.
+
+### 5.5 The MASQUE tension, restated
+
+§4C rejected MASQUE on binary-size grounds and that still holds for a 16 MB
+Mango. But it should be said plainly that the fallback use case is exactly
+where MASQUE's value is highest: HTTP/3 to port 443, indistinguishable from
+ordinary web traffic, defeating both of the ❌ rows above. The honest
+position is that MistUI is choosing the weaker transport because the
+stronger one does not fit the hardware — not because the weaker one is
+adequate. Worth mentioning to Cloudflare; they may have views.
+
+## 6. Risks
+
+### 6.1 Terms of service — the blocker
 
 The 1.1.1.1 mobile app is licensed as a "non-exclusive, personal, revocable,
 non-transferable license to use the Mobile Application on the mobile device
@@ -174,14 +294,11 @@ Required before shipping option B, in order of preference:
    answer removes all of this.
 3. Failing both, ship option A and let the user make the call themselves.
 
-### 5.2 The other risks
+### 6.2 The other risks
 
-- **Hotel networks block the ports.** WARP's default UDP 2408 (fallbacks
-  500, 1701, 4500) is exactly what a captive network is likely to drop —
-  Cloudflare's own stated reason for moving to MASQUE. Mitigation: WARP's
-  anycast endpoints accept a large pool of alternate UDP ports, so the
-  connect path should probe several rather than failing on 2408. This is
-  work option B has to do that a pasted profile does not.
+- **The fallback is blocked by the same networks** that block the tunnel it
+  is standing in for, in two of five blocking modes — see §5.3, and §5.4 for
+  the port-probing mitigation that decides how often this bites.
 - **Cloudflare egress IPs are widely rate-limited.** Sites — including many
   behind Cloudflare — serve CAPTCHAs and blocks to WARP addresses. On a
   router this hits every device on the LAN at once, and users will read it
@@ -193,19 +310,23 @@ Required before shipping option B, in order of preference:
 - **Support surface.** Cloudflare cannot help these users and neither can a
   VPN provider. Every WARP problem becomes a MistUI issue.
 
-## 6. Recommendation
+## 7. Recommendation
 
-1. **Ship option A now.** A documented `wgcf` path costs one paragraph,
-   works on the current build, and gives the "no VPN" user something today.
-2. **Resolve §5.1 before writing option B.** The engineering is small enough
-   that it should not start until the legal question has an answer; getting
-   that answer is the highest-value next step by a wide margin.
-3. **If cleared, build option B as a labelled third choice** in wizard step 3
-   — alongside "paste a config" and "skip", never in place of them, and
-   described honestly: *"Free basic protection from Cloudflare. Encrypts your
-   traffic off this network. It does not hide you from Cloudflare and will
-   not change your apparent location."*
-4. **Do not chase MASQUE.**
+1. **Ship option A now** — done, `docs/no-vpn-provider.md`. Costs a page,
+   works on the current build, carries no ToS exposure for the project.
+2. **Fix the tunnel-liveness gap (§5.1) independently of all of this.** It
+   is a real bug in the portal machinery's honesty guarantees, it is a
+   handful of lines, and it is the fallback's trigger for free. Do it
+   whatever Cloudflare says.
+3. **Resolve §6.1 before writing option B.** The engineering is small
+   enough that it should not start until the terms question has an answer.
+4. **If cleared, build the fallback, not a third VPN option.** Offered when
+   the real tunnel fails to handshake, on its own interface, auto-reverting,
+   labelled distinctly on the dashboard, kill switch on throughout, and
+   honest when WARP is blocked too. Port probing (§5.4) is part of the
+   feature, not a later refinement.
+5. **Do not chase MASQUE** — while noting §5.5, that this means accepting
+   the weaker transport for hardware reasons rather than technical ones.
 
 ## Sources
 
@@ -222,4 +343,4 @@ Required before shipping option B, in order of preference:
 - [Cloudflare Privacy Proxy — Geolocation](https://developers.cloudflare.com/privacy-proxy/concepts/geolocation/)
   — region-matched egress IPs
 - [1.1.1.1 Mobile Application Terms of Use](https://www.cloudflare.com/public-resolver-mobile-terms)
-  — licence grant (not fully readable from this environment; see §5.1)
+  — licence grant (not fully readable from this environment; see §6.1)
