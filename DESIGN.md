@@ -133,7 +133,11 @@ missing is something the user simply *cannot* configure (no LuCI fallback).
    SSID + password (AP), WAN/LAN basics. Single 2.4 GHz radio on the Mango,
    so AP+STA share the band (§2). Includes captive-portal handling (§5.1) —
    hotel networks are the primary use case, and most of them gate access.
-4. **WireGuard** — import a config, connect/disconnect, kill switch.
+4. **WireGuard** — import a config, connect/disconnect, kill switch. A user
+   with no VPN subscription can import a free Cloudflare WARP profile like
+   any other config (`docs/no-vpn-provider.md`); whether MistUI should
+   enrol in WARP *itself* is open, and blocked on Cloudflare's terms rather
+   than on effort — see `docs/cloudflare-warp.md`.
 5. **DNS** — encrypted DNS (DoH) on by default: dnsmasq forwards every
    lookup — LAN clients' and the router's own — to a DoH client embedded in
    `mistd` (curated resolvers, Quad9 default; endpoints IP-pinned so there

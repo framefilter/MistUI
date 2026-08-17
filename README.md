@@ -76,6 +76,15 @@ Then:
 ROUTER=192.168.1.1 ./scripts/dev-deploy.sh    # build + scp + restart
 ```
 
+## Docs
+
+- [DESIGN.md](./DESIGN.md) — architecture, threat model, milestones
+- [docs/no-vpn-provider.md](./docs/no-vpn-provider.md) — getting a free
+  WireGuard config from Cloudflare WARP when you don't have a VPN
+  subscription, and what it does and doesn't protect
+- [docs/cloudflare-warp.md](./docs/cloudflare-warp.md) — the investigation
+  behind that: whether WARP should become a built-in option
+
 ## License
 
 GPL-3.0-or-later. See [LICENSE](./LICENSE).
